@@ -1,0 +1,34 @@
+import { ChatInputCommandInteraction, AutocompleteInteraction } from 'discord.js';
+import { DraftManager } from '../draft/DraftManager';
+
+import * as draftCmd   from './draft';
+import * as pickCmd    from './pick';
+import * as autopickCmd from './autopick';
+import * as boardCmd   from './board';
+import * as statusCmd  from './status';
+import * as rosterCmd  from './roster';
+import * as tradeCmd   from './trade';
+import * as helpCmd      from './help';
+import * as inventoryCmd from './inventory';
+
+interface Command {
+  data: { name: string; toJSON(): unknown };
+  execute(interaction: ChatInputCommandInteraction, manager: DraftManager): Promise<void>;
+  autocomplete?(interaction: AutocompleteInteraction, manager: DraftManager): Promise<void>;
+}
+
+export const commands: Command[] = [
+  draftCmd,
+  pickCmd,
+  autopickCmd,
+  boardCmd,
+  statusCmd,
+  rosterCmd,
+  tradeCmd,
+  helpCmd,
+  inventoryCmd,
+];
+
+export const commandMap = new Map<string, Command>(
+  commands.map(cmd => [cmd.data.name, cmd])
+);

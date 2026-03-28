@@ -1,0 +1,5 @@
+node_modules/
+build/
+.env
+.env.backup.txt
+data/draft-state.json

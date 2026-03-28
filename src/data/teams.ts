@@ -1,0 +1,38 @@
+import { Team } from '../draft/types';
+
+export const TEAMS: Record<string, Team> = {
+  'LV':  { name: 'Las Vegas Raiders',        city: 'Las Vegas',     abbr: 'LV',  color: 0xA5ACAF },
+  'NYJ': { name: 'New York Jets',             city: 'New York',      abbr: 'NYJ', color: 0x125740 },
+  'ARI': { name: 'Arizona Cardinals',         city: 'Arizona',       abbr: 'ARI', color: 0x97233F },
+  'TEN': { name: 'Tennessee Titans',          city: 'Tennessee',     abbr: 'TEN', color: 0x0C2340 },
+  'NYG': { name: 'New York Giants',           city: 'New York',      abbr: 'NYG', color: 0x0B2265 },
+  'CLE': { name: 'Cleveland Browns',          city: 'Cleveland',     abbr: 'CLE', color: 0xFF3C00 },
+  'WAS': { name: 'Washington Commanders',     city: 'Washington',    abbr: 'WAS', color: 0x773141 },
+  'NO':  { name: 'New Orleans Saints',        city: 'New Orleans',   abbr: 'NO',  color: 0xD3BC8D },
+  'KC':  { name: 'Kansas City Chiefs',        city: 'Kansas City',   abbr: 'KC',  color: 0xE31837 },
+  'CIN': { name: 'Cincinnati Bengals',        city: 'Cincinnati',    abbr: 'CIN', color: 0xFB4F14 },
+  'MIA': { name: 'Miami Dolphins',            city: 'Miami',         abbr: 'MIA', color: 0x008E97 },
+  'DAL': { name: 'Dallas Cowboys',            city: 'Dallas',        abbr: 'DAL', color: 0x003594 },
+  'ATL': { name: 'Atlanta Falcons',           city: 'Atlanta',       abbr: 'ATL', color: 0xA71930 },
+  'BAL': { name: 'Baltimore Ravens',          city: 'Baltimore',     abbr: 'BAL', color: 0x241773 },
+  'TB':  { name: 'Tampa Bay Buccaneers',      city: 'Tampa Bay',     abbr: 'TB',  color: 0xD50A0A },
+  'IND': { name: 'Indianapolis Colts',        city: 'Indianapolis',  abbr: 'IND', color: 0x002C5F },
+  'DET': { name: 'Detroit Lions',             city: 'Detroit',       abbr: 'DET', color: 0x0076B6 },
+  'MIN': { name: 'Minnesota Vikings',         city: 'Minnesota',     abbr: 'MIN', color: 0x4F2683 },
+  'CAR': { name: 'Carolina Panthers',         city: 'Carolina',      abbr: 'CAR', color: 0x0085CA },
+  'GB':  { name: 'Green Bay Packers',         city: 'Green Bay',     abbr: 'GB',  color: 0x203731 },
+  'PIT': { name: 'Pittsburgh Steelers',       city: 'Pittsburgh',    abbr: 'PIT', color: 0xFFB612 },
+  'LAC': { name: 'Los Angeles Chargers',      city: 'Los Angeles',   abbr: 'LAC', color: 0x0080C6 },
+  'PHI': { name: 'Philadelphia Eagles',       city: 'Philadelphia',  abbr: 'PHI', color: 0x004C54 },
+  'JAX': { name: 'Jacksonville Jaguars',      city: 'Jacksonville',  abbr: 'JAX', color: 0x006778 },
+  'CHI': { name: 'Chicago Bears',             city: 'Chicago',       abbr: 'CHI', color: 0x0B162A },
+  'BUF': { name: 'Buffalo Bills',             city: 'Buffalo',       abbr: 'BUF', color: 0x00338D },
+  'SF':  { name: 'San Francisco 49ers',       city: 'San Francisco', abbr: 'SF',  color: 0xAA0000 },
+  'HOU': { name: 'Houston Texans',            city: 'Houston',       abbr: 'HOU', color: 0x03202F },
+  'LAR': { name: 'Los Angeles Rams',          city: 'Los Angeles',   abbr: 'LAR', color: 0x003594 },
+  'DEN': { name: 'Denver Broncos',            city: 'Denver',        abbr: 'DEN', color: 0xFB4F14 },
+  'NE':  { name: 'New England Patriots',      city: 'New England',   abbr: 'NE',  color: 0x002244 },
+  'SEA': { name: 'Seattle Seahawks',          city: 'Seattle',       abbr: 'SEA', color: 0x002244 },
+};
+
+export const TEAM_ABBRS = Object.keys(TEAMS);

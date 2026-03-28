@@ -1,0 +1,21 @@
+{
+  "name": "mock-draft-bot",
+  "version": "1.0.0",
+  "description": "2026 NFL Mock Draft Discord Bot",
+  "main": "build/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node build/index.js",
+    "dev": "ts-node src/index.ts",
+    "deploy": "ts-node src/deploy-commands.ts"
+  },
+  "dependencies": {
+    "discord.js": "^14.19.3",
+    "dotenv": "^16.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.50",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3"
+  }
+}
