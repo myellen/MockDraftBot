@@ -83,6 +83,9 @@ export interface DraftState {
   tradeHistory: PendingTrade[];            // completed trades (for admin undo)
   playerOwnership: Record<string, string>; // playerName (lowercase) -> teamAbbr overrides
   futurePickRights: FuturePickRight[];     // tradeable future-year picks
+}
+
+export interface BoardData {
   customBoards: Record<string, number[]>;      // teamAbbr -> ordered prospect ranks (GM-submitted)
   positionPriority: Record<string, string[]>;  // teamAbbr -> ordered position list for autopick
 }

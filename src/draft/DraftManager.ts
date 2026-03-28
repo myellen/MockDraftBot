@@ -3,7 +3,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import {
   DraftState, DraftStatus, DraftConfig, CompletedPick,
-  PickSlot, PickResult, RegisterResult, PendingTrade, FuturePickRight
+  PickSlot, PickResult, RegisterResult, PendingTrade, FuturePickRight, BoardData
 } from './types';
 import { buildSchedule } from './scheduleBuilder';
 import { FUTURE_PICK_TRADES } from '../data/draftOrder';
@@ -15,6 +15,15 @@ import { buildPickEmbed, buildOnTheClockEmbed, buildDraftCompleteEmbed, buildTea
 function statePath(guildId: string): string {
   return path.join(__dirname, `../../data/draft-state-${guildId}.json`);
 }
+
+function boardPath(guildId: string): string {
+  return path.join(__dirname, `../../data/draft-boards-${guildId}.json`);
+}
+
+const DEFAULT_BOARD_DATA: BoardData = {
+  customBoards: {},
+  positionPriority: {},
+};
 
 function buildFuturePickRights(): FuturePickRight[] {
   const rights: FuturePickRight[] = [];
@@ -53,19 +62,19 @@ const DEFAULT_STATE: DraftState = {
   tradeHistory: [],
   playerOwnership: {},
   futurePickRights: buildFuturePickRights(),
-  customBoards: {},
-  positionPriority: {},
 };
 
 export class DraftManager {
   private state: DraftState;
+  private boardData: BoardData;
   private timerHandle: NodeJS.Timeout | null = null;
   private client: Client;
   private guildId: string;
 
-  private constructor(client: Client, state: DraftState, guildId: string) {
+  private constructor(client: Client, state: DraftState, boardData: BoardData, guildId: string) {
     this.client = client;
     this.state = state;
+    this.boardData = boardData;
     this.guildId = guildId;
   }
 
@@ -88,8 +97,6 @@ export class DraftManager {
           tradeHistory: (raw.tradeHistory as PendingTrade[] | undefined) ?? [],
           playerOwnership: (raw.playerOwnership as Record<string, string> | undefined) ?? {},
           futurePickRights: (raw.futurePickRights as FuturePickRight[] | undefined) ?? buildFuturePickRights(),
-          customBoards: (raw.customBoards as Record<string, number[]> | undefined) ?? {},
-          positionPriority: (raw.positionPriority as Record<string, string[]> | undefined) ?? {},
           config: { ...(parsed.config as DraftConfig), rounds: (parsed.config as DraftConfig).rounds ?? 7 },
         };
         // Backfill arrays on existing trades
@@ -108,7 +115,19 @@ export class DraftManager {
       state = { ...DEFAULT_STATE };
     }
 
-    const manager = new DraftManager(client, state, guildId);
+    let boardData: BoardData;
+    try {
+      const raw = await fs.readFile(boardPath(guildId), 'utf-8');
+      const parsed = JSON.parse(raw) as BoardData;
+      boardData = {
+        customBoards: parsed.customBoards ?? {},
+        positionPriority: parsed.positionPriority ?? {},
+      };
+    } catch {
+      boardData = { ...DEFAULT_BOARD_DATA };
+    }
+
+    const manager = new DraftManager(client, state, boardData, guildId);
 
     // Restore timer if draft was active on restart
     client.once('ready', () => manager.restoreTimer());
@@ -118,10 +137,17 @@ export class DraftManager {
 
   private async persist(): Promise<void> {
     const p = statePath(this.guildId);
-    const json = JSON.stringify(this.state, null, 2);
     const tmp = p + '.tmp';
     await fs.mkdir(path.dirname(p), { recursive: true });
-    await fs.writeFile(tmp, json, 'utf-8');
+    await fs.writeFile(tmp, JSON.stringify(this.state, null, 2), 'utf-8');
+    await fs.rename(tmp, p);
+  }
+
+  private async persistBoards(): Promise<void> {
+    const p = boardPath(this.guildId);
+    const tmp = p + '.tmp';
+    await fs.mkdir(path.dirname(p), { recursive: true });
+    await fs.writeFile(tmp, JSON.stringify(this.boardData, null, 2), 'utf-8');
     await fs.rename(tmp, p);
   }
 
@@ -192,9 +218,29 @@ export class DraftManager {
   }
 
   async reset(): Promise<void> {
+    // Soft reset — clears live draft data, preserves assignments/boards/config
+    this.clearTimer();
+    this.state = {
+      ...this.state,
+      status: 'idle',
+      schedule: [],
+      currentPickIndex: 0,
+      picks: [],
+      availableRanks: [],
+      timerExpiresAt: null,
+      pendingTrades: [],
+      tradeHistory: [],
+    };
+    await this.persist();
+  }
+
+  async wipe(): Promise<void> {
+    // Hard reset — clears everything back to blank slate including boards
     this.clearTimer();
     this.state = { ...DEFAULT_STATE };
+    this.boardData = { ...DEFAULT_BOARD_DATA };
     await this.persist();
+    await this.persistBoards();
   }
 
   // ─── Picking ──────────────────────────────────────────────────────────────
@@ -233,13 +279,13 @@ export class DraftManager {
   private getBestPickForTeam(teamAbbr: string): number | undefined {
     const available = new Set(this.state.availableRanks);
 
-    const board = this.state.customBoards[teamAbbr];
+    const board = this.boardData.customBoards[teamAbbr];
     if (board?.length) {
       const pick = board.find(rank => available.has(rank));
       if (pick !== undefined) return pick;
     }
 
-    const priority = this.state.positionPriority[teamAbbr];
+    const priority = this.boardData.positionPriority[teamAbbr];
     if (priority?.length) {
       for (const pos of priority) {
         const pick = this.state.availableRanks.find(rank => PROSPECT_BY_RANK.get(rank)?.pos === pos);
@@ -261,28 +307,28 @@ export class DraftManager {
       if (rank !== undefined) ranks.push(rank);
       else unmatched.push(name);
     }
-    this.state.customBoards[teamAbbr] = ranks;
-    void this.persist();
+    this.boardData.customBoards[teamAbbr] = ranks;
+    void this.persistBoards();
     return { matched: ranks.length, unmatched };
   }
 
   setPositionPriority(teamAbbr: string, positions: string[]): void {
-    this.state.positionPriority[teamAbbr] = positions;
-    void this.persist();
+    this.boardData.positionPriority[teamAbbr] = positions;
+    void this.persistBoards();
   }
 
   clearBoard(teamAbbr: string, what: 'board' | 'priority' | 'all'): void {
-    if (what === 'board' || what === 'all') delete this.state.customBoards[teamAbbr];
-    if (what === 'priority' || what === 'all') delete this.state.positionPriority[teamAbbr];
-    void this.persist();
+    if (what === 'board' || what === 'all') delete this.boardData.customBoards[teamAbbr];
+    if (what === 'priority' || what === 'all') delete this.boardData.positionPriority[teamAbbr];
+    void this.persistBoards();
   }
 
   getCustomBoard(teamAbbr: string): number[] {
-    return this.state.customBoards[teamAbbr] ?? [];
+    return this.boardData.customBoards[teamAbbr] ?? [];
   }
 
   getPositionPriority(teamAbbr: string): string[] {
-    return this.state.positionPriority[teamAbbr] ?? [];
+    return this.boardData.positionPriority[teamAbbr] ?? [];
   }
 
   getMyBoardPage(teamAbbr: string, page: number, pageSize = 20): {
@@ -291,7 +337,7 @@ export class DraftManager {
     totalPages: number;
     page: number;
   } {
-    const board = this.state.customBoards[teamAbbr] ?? [];
+    const board = this.boardData.customBoards[teamAbbr] ?? [];
     const available = new Set(this.state.availableRanks);
     const total = board.length;
     const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -503,7 +549,9 @@ export class DraftManager {
   }
 
   getUnassignedTeams(): string[] {
-    return Object.keys(TEAMS).filter(abbr => !this.state.assignments[abbr]);
+    return Object.keys(TEAMS)
+      .filter(abbr => !this.state.assignments[abbr])
+      .sort((a, b) => TEAMS[a].name.localeCompare(TEAMS[b].name));
   }
 
   getAvailableProspects(pos?: string, page = 1, pageSize = 20): { prospects: typeof PROSPECTS_DEDUPED; totalPages: number; total: number } {

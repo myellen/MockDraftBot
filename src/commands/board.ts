@@ -6,6 +6,7 @@ import {
 import { DraftManager } from '../draft/DraftManager';
 import { ALL_POSITIONS } from '../data/prospects';
 import { TEAMS } from '../data/teams';
+import { isAdmin } from '../utils/permissions';
 import { buildBoardEmbed, buildMyBoardEmbed } from '../utils/embeds';
 
 export const data = new SlashCommandBuilder()
@@ -50,6 +51,12 @@ export const data = new SlashCommandBuilder()
       .setName('file')
       .setDescription('.txt or .csv file with player names in your preferred order')
       .setRequired(true)
+    )
+    .addStringOption(opt => opt
+      .setName('team')
+      .setDescription('Override board for a specific team (admin only)')
+      .setRequired(false)
+      .setAutocomplete(true)
     )
   )
   .addSubcommand(sub => sub
@@ -103,9 +110,20 @@ export async function execute(
   }
 
   if (sub === 'submit') {
-    const teamAbbr = manager.getUserTeam(interaction.user.id);
+    const overrideTeam = interaction.options.getString('team')?.toUpperCase() ?? null;
+
+    if (overrideTeam && !isAdmin(interaction)) {
+      await interaction.reply({ content: '❌ Only admins can submit a board for another team.', ephemeral: true });
+      return;
+    }
+
+    const teamAbbr = overrideTeam ?? manager.getUserTeam(interaction.user.id);
     if (!teamAbbr) {
       await interaction.reply({ content: '❌ You need a registered team to submit a board.', ephemeral: true });
+      return;
+    }
+    if (!TEAMS[teamAbbr]) {
+      await interaction.reply({ content: `❌ Unknown team: ${teamAbbr}`, ephemeral: true });
       return;
     }
 
@@ -136,6 +154,7 @@ export async function execute(
       .map(line => line
         .replace(/^[\d]+[.):\-,\s]+/, '') // strip leading "1." / "1," / "1) "
         .replace(/\s*\([^)]*\)\s*$/, '')  // strip trailing "(QB)" / "(Ohio State)"
+        .replace(/[\u2018\u2019\u02BC]/g, "'") // normalize curly/modifier apostrophes
         .trim()
       )
       .filter(Boolean);
@@ -217,9 +236,22 @@ export async function autocomplete(
   manager: DraftManager
 ): Promise<void> {
   const sub = interaction.options.getSubcommand();
+  const focused = interaction.options.getFocused();
+
+  if (sub === 'submit') {
+    const q = focused.toUpperCase();
+    const choices = Object.keys(TEAMS)
+      .filter(abbr => abbr.includes(q) || TEAMS[abbr].name.toUpperCase().includes(q))
+      .slice(0, 25)
+      .map(abbr => {
+        const hasBoard = manager.getCustomBoard(abbr).length > 0;
+        return { name: `${TEAMS[abbr].name} (${abbr})${hasBoard ? ' ★' : ''}`, value: abbr };
+      });
+    await interaction.respond(choices);
+    return;
+  }
 
   if (sub === 'priority') {
-    const focused = interaction.options.getFocused();
     const parts = focused.split(',');
     const currentFragment = parts[parts.length - 1].trim().toUpperCase();
     const prefix = parts.slice(0, -1).map(p => p.trim().toUpperCase()).filter(Boolean);

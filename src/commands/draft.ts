@@ -21,9 +21,9 @@ export const data = new SlashCommandBuilder()
     )
     .addIntegerOption(opt => opt
       .setName('timer')
-      .setDescription('Seconds per pick (0 = no timer)')
+      .setDescription('Minutes per pick (0 = no timer)')
       .setMinValue(0)
-      .setMaxValue(600)
+      .setMaxValue(1440)
       .setRequired(false)
     )
     .addBooleanOption(opt => opt
@@ -71,7 +71,11 @@ export const data = new SlashCommandBuilder()
   )
   .addSubcommand(sub => sub
     .setName('reset')
-    .setDescription('Wipe all draft state and start over (admin only)')
+    .setDescription('Clear picks/trades and return to idle — keeps assignments, boards, and config (admin only)')
+  )
+  .addSubcommand(sub => sub
+    .setName('wipe')
+    .setDescription('Wipe ALL state including assignments, boards, and config (admin only)')
   )
   .addSubcommand(sub => sub
     .setName('rewind')
@@ -160,7 +164,7 @@ export async function execute(
   const sub = interaction.options.getSubcommand();
 
   // Admin-only commands
-  const adminCmds = ['setup', 'start', 'pause', 'resume', 'reset', 'rewind'];
+  const adminCmds = ['setup', 'start', 'pause', 'resume', 'reset', 'rewind', 'wipe'];
   if (adminCmds.includes(sub) && !isAdmin(interaction)) {
     await interaction.reply({ content: '❌ You need Administrator permission to use this command.', ephemeral: true });
     return;
@@ -174,12 +178,12 @@ export async function execute(
 
     await manager.setup({
       channelId: channel.id,
-      timerSeconds: timer === 0 ? null : timer,
+      timerSeconds: timer === 0 ? null : (timer !== null ? timer * 60 : null),
       autoPick: autopick,
       rounds,
     });
 
-    const timerStr = timer ? `${timer}s per pick` : 'No timer';
+    const timerStr = timer ? `${timer}m per pick` : 'No timer';
     await interaction.reply({
       embeds: [
         new EmbedBuilder()
@@ -245,7 +249,11 @@ export async function execute(
 
   } else if (sub === 'reset') {
     await manager.reset();
-    await interaction.reply({ content: '🗑️ Draft has been reset. All state cleared.', ephemeral: true });
+    await interaction.reply({ content: '🔄 Draft reset. Picks, trades, and schedule cleared — assignments and boards preserved.', ephemeral: true });
+
+  } else if (sub === 'wipe') {
+    await manager.wipe();
+    await interaction.reply({ content: '🗑️ Full wipe complete. All state cleared.', ephemeral: true });
 
   } else if (sub === 'rewind') {
     const round = interaction.options.getInteger('round', true);

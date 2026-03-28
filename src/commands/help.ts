@@ -34,15 +34,15 @@ export async function execute(
           'The bot will @mention you when your team is on the clock.\n' +
           '> `/pick` → choose a position filter (or **All**), then search for a player by name\n' +
           'You\'ll see autocomplete suggestions as you type the player\'s name. Select one and submit.\n' +
-          'If you run out of time (if a timer is set), the bot will auto-pick the top available player for you.',
+          'If you run out of time (if a timer is set), the bot will auto-pick using your custom board, position priority, or best available — in that order.',
         inline: false,
       },
       {
         name: '3️⃣ Skip Your Turn — `/autopick`',
         value:
-          'If you want the bot to pick the best available player for you right now:\n' +
+          'If you want the bot to pick for you right now:\n' +
           '> `/autopick`\n' +
-          'Only works when it\'s your team\'s pick.',
+          'Uses your custom board if you\'ve submitted one, otherwise position priority, otherwise best available. Only works when it\'s your team\'s pick.',
         inline: false,
       },
       {
@@ -154,17 +154,18 @@ export async function execute(
         value:
           'Configure the draft before it starts.\n' +
           '• `channel` — where pick announcements are posted\n' +
-          '• `timer` — seconds per pick (0 = no timer)\n' +
+          '• `timer` — minutes per pick (0 = no timer)\n' +
           '• `autopick` — whether the bot auto-picks for unregistered teams\n' +
           '• `rounds` — how many rounds to run (1–7, default 7)',
         inline: false,
       },
       {
-        name: 'Draft Control — `/draft start` · `pause` · `resume` · `reset` · `rewind`',
+        name: 'Draft Control — `/draft start` · `pause` · `resume` · `reset` · `wipe` · `rewind`',
         value:
           '• `/draft start` — begin the draft\n' +
           '• `/draft pause` / `resume` — freeze and unfreeze\n' +
-          '• `/draft reset` — wipe all state and start over\n' +
+          '• `/draft reset` — clear picks, trades, and schedule; keeps assignments, boards, and config\n' +
+          '• `/draft wipe` — erase everything including assignments and boards\n' +
           '• `/draft rewind round: pick:` — roll back to any pick',
         inline: false,
       },
