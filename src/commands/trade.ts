@@ -6,6 +6,7 @@ import {
 import { DraftManager } from '../draft/DraftManager';
 import { TEAMS } from '../data/teams';
 import { buildPendingTradesEmbed } from '../utils/embeds';
+import { isAdmin } from '../utils/permissions';
 
 export const data = new SlashCommandBuilder()
   .setName('trade')
@@ -78,6 +79,58 @@ export const data = new SlashCommandBuilder()
   .addSubcommand(sub => sub
     .setName('list')
     .setDescription('View your pending trades and future picks')
+  )
+  .addSubcommand(sub => sub
+    .setName('force')
+    .setDescription('Force-execute a trade immediately (admin only)')
+    .addStringOption(opt => opt
+      .setName('offer-team')
+      .setDescription('Team giving assets')
+      .setRequired(true)
+      .setAutocomplete(true)
+    )
+    .addStringOption(opt => opt
+      .setName('receive-team')
+      .setDescription('Team receiving assets')
+      .setRequired(true)
+      .setAutocomplete(true)
+    )
+    .addStringOption(opt => opt
+      .setName('offer')
+      .setDescription('Picks offer-team gives up — overall # or round.pick, comma-separated')
+      .setRequired(false)
+      .setAutocomplete(true)
+    )
+    .addStringOption(opt => opt
+      .setName('receive')
+      .setDescription('Picks receive-team gives up — overall # or round.pick, comma-separated')
+      .setRequired(false)
+      .setAutocomplete(true)
+    )
+    .addStringOption(opt => opt
+      .setName('offer-players')
+      .setDescription('Players offer-team gives up — name or jersey #, comma-separated')
+      .setRequired(false)
+      .setAutocomplete(true)
+    )
+    .addStringOption(opt => opt
+      .setName('receive-players')
+      .setDescription('Players receive-team gives up — name or jersey #, comma-separated')
+      .setRequired(false)
+      .setAutocomplete(true)
+    )
+    .addStringOption(opt => opt
+      .setName('offer-future')
+      .setDescription('Future picks offer-team gives — comma-separated (e.g. 2027R1)')
+      .setRequired(false)
+      .setAutocomplete(true)
+    )
+    .addStringOption(opt => opt
+      .setName('receive-future')
+      .setDescription('Future picks receive-team gives — comma-separated (e.g. 2027R1)')
+      .setRequired(false)
+      .setAutocomplete(true)
+    )
   );
 
 export async function execute(
@@ -280,6 +333,135 @@ export async function execute(
     await interaction.reply({ embeds: [embed], ephemeral: true });
     return;
   }
+
+  if (sub === 'force') {
+    if (!isAdmin(interaction)) {
+      await interaction.reply({ content: '❌ You need Administrator permission to use this command.', ephemeral: true });
+      return;
+    }
+
+    const offerTeamAbbr = interaction.options.getString('offer-team', true).toUpperCase();
+    const receiveTeamAbbr = interaction.options.getString('receive-team', true).toUpperCase();
+    const offerStr = interaction.options.getString('offer') ?? '';
+    const receiveStr = interaction.options.getString('receive') ?? '';
+    const offerPlayersStr = interaction.options.getString('offer-players') ?? '';
+    const receivePlayersStr = interaction.options.getString('receive-players') ?? '';
+    const offerFutureStr = interaction.options.getString('offer-future') ?? '';
+    const receiveFutureStr = interaction.options.getString('receive-future') ?? '';
+
+    const parseOveralls = (s: string): number[] | null => {
+      if (!s.trim()) return [];
+      const parts = s.split(/[\s,]+/).filter(Boolean);
+      const nums: number[] = [];
+      for (const part of parts) {
+        const rpMatch = part.match(/^(\d+)\.(\d+)$/);
+        if (rpMatch) {
+          const overall = manager.resolvePickByRoundPick(parseInt(rpMatch[1], 10), parseInt(rpMatch[2], 10));
+          if (overall === null) return null;
+          nums.push(overall);
+        } else {
+          const n = parseInt(part, 10);
+          if (isNaN(n) || n <= 0) return null;
+          nums.push(n);
+        }
+      }
+      return nums;
+    };
+
+    const parsePlayers = (s: string, teamAbbr: string): string[] | string => {
+      if (!s.trim()) return [];
+      const result: string[] = [];
+      for (const entry of s.split(',').map(p => p.trim()).filter(Boolean)) {
+        if (/^\d{1,3}$/.test(entry)) {
+          const name = manager.resolvePlayerByJersey(teamAbbr, entry);
+          if (!name) return `No player with jersey #${entry} on that team`;
+          result.push(name);
+        } else {
+          result.push(entry);
+        }
+      }
+      return result;
+    };
+
+    const parseFuturePicks = (s: string, teamAbbr: string): string[] | string => {
+      if (!s.trim()) return [];
+      const entries = s.split(',').map(e => e.trim()).filter(Boolean);
+      const ids: string[] = [];
+      for (const entry of entries) {
+        const m = entry.match(/^(\d{4})[Rr](\d)$/);
+        if (!m) return `Invalid future pick format "${entry}". Use e.g. 2027R1,2028R3`;
+        const year = parseInt(m[1], 10);
+        const round = parseInt(m[2], 10);
+        if (year < 2027 || year > 2029) return `Year must be 2027–2029 (got ${year})`;
+        if (round < 1 || round > 7) return `Round must be 1–7 (got ${round})`;
+        const right = manager.resolveFuturePickRight(teamAbbr, year, round);
+        if (!right) return `No ${year} Round ${round} pick found for that team.`;
+        ids.push(right.id);
+      }
+      return ids;
+    };
+
+    if (!TEAMS[offerTeamAbbr]) {
+      await interaction.reply({ content: `❌ Unknown team: ${offerTeamAbbr}`, ephemeral: true });
+      return;
+    }
+    if (!TEAMS[receiveTeamAbbr]) {
+      await interaction.reply({ content: `❌ Unknown team: ${receiveTeamAbbr}`, ephemeral: true });
+      return;
+    }
+    if (offerTeamAbbr === receiveTeamAbbr) {
+      await interaction.reply({ content: '❌ Offer team and receive team must be different.', ephemeral: true });
+      return;
+    }
+
+    const offered = parseOveralls(offerStr);
+    const requested = parseOveralls(receiveStr);
+    if (offered === null) {
+      await interaction.reply({ content: '❌ Invalid "offer" value.', ephemeral: true }); return;
+    }
+    if (requested === null) {
+      await interaction.reply({ content: '❌ Invalid "receive" value.', ephemeral: true }); return;
+    }
+
+    const offeredPlayers = parsePlayers(offerPlayersStr, offerTeamAbbr);
+    if (typeof offeredPlayers === 'string') {
+      await interaction.reply({ content: `❌ ${offeredPlayers}`, ephemeral: true }); return;
+    }
+    const requestedPlayers = parsePlayers(receivePlayersStr, receiveTeamAbbr);
+    if (typeof requestedPlayers === 'string') {
+      await interaction.reply({ content: `❌ ${requestedPlayers}`, ephemeral: true }); return;
+    }
+
+    const offeredFuture = parseFuturePicks(offerFutureStr, offerTeamAbbr);
+    if (typeof offeredFuture === 'string') {
+      await interaction.reply({ content: `❌ ${offeredFuture}`, ephemeral: true }); return;
+    }
+    const requestedFuture = parseFuturePicks(receiveFutureStr, receiveTeamAbbr);
+    if (typeof requestedFuture === 'string') {
+      await interaction.reply({ content: `❌ ${requestedFuture}`, ephemeral: true }); return;
+    }
+
+    if (offered.length + offeredPlayers.length + offeredFuture.length === 0 ||
+        requested.length + requestedPlayers.length + requestedFuture.length === 0) {
+      await interaction.reply({ content: '❌ Must include at least one pick or player on each side.', ephemeral: true });
+      return;
+    }
+
+    await interaction.deferReply({ ephemeral: true });
+    const result = await manager.adminForceTrade(
+      offerTeamAbbr, receiveTeamAbbr,
+      offered, requested,
+      offeredPlayers, requestedPlayers,
+      offeredFuture, requestedFuture
+    );
+
+    if (!result.success) {
+      await interaction.editReply(`❌ ${result.error}`);
+      return;
+    }
+    await interaction.editReply(`✅ Trade force-executed between **${TEAMS[offerTeamAbbr]?.name ?? offerTeamAbbr}** and **${TEAMS[receiveTeamAbbr]?.name ?? receiveTeamAbbr}**.`);
+    return;
+  }
 }
 
 export async function autocomplete(
@@ -416,6 +598,108 @@ export async function autocomplete(
           const name = prefix.length > 0
             ? `[${prefix.join(', ')}, ${key}] ${pickLabel}`
             : pickLabel;
+          return { name: name.slice(0, 100), value: displayValue };
+        });
+      await interaction.respond(choices);
+      return;
+    }
+  }
+
+  // ── force (admin) ─────────────────────────────────────────────────────────
+  if (sub === 'force') {
+    const state = manager.getState();
+
+    // Team autocomplete for offer-team / receive-team
+    if (focusedName === 'offer-team' || focusedName === 'receive-team') {
+      const q = focusedValue.toUpperCase();
+      const choices = Object.keys(TEAMS)
+        .filter(abbr => abbr.includes(q) || TEAMS[abbr].name.toUpperCase().includes(q))
+        .slice(0, 25)
+        .map(abbr => {
+          const gmId = state.assignments[abbr];
+          const label = gmId ? '' : ' (no GM)';
+          return { name: `${TEAMS[abbr].name} (${abbr})${label}`, value: abbr };
+        });
+      await interaction.respond(choices);
+      return;
+    }
+
+    const offerTeamAbbr = (interaction.options.get('offer-team')?.value as string | undefined)?.toUpperCase() ?? null;
+    const receiveTeamAbbr = (interaction.options.get('receive-team')?.value as string | undefined)?.toUpperCase() ?? null;
+
+    // Current-draft pick autocomplete
+    if (focusedName === 'offer' || focusedName === 'receive') {
+      const teamAbbr = focusedName === 'offer' ? offerTeamAbbr : receiveTeamAbbr;
+      if (!teamAbbr) { await interaction.respond([]); return; }
+
+      const picks = manager.getFuturePicksForTeam(teamAbbr);
+      const parts = focusedValue.split(',');
+      const currentFragment = parts[parts.length - 1].trim();
+      const prefix = parts.slice(0, -1).map(p => p.trim()).filter(Boolean);
+      const alreadyPicked = new Set(prefix.map(Number));
+
+      const choices = picks
+        .filter(p => !alreadyPicked.has(p.overall) && String(p.overall).startsWith(currentFragment))
+        .slice(0, 25)
+        .map(p => {
+          const teamName = TEAMS[p.currentTeam]?.name ?? p.currentTeam;
+          const via = p.isTraded ? ` via ${TEAMS[p.originalTeam]?.name ?? p.originalTeam}` : '';
+          const displayValue = prefix.length > 0 ? `${prefix.join(',')},${p.overall}` : String(p.overall);
+          const pickLabel = `#${p.overall} · R${p.round}P${p.roundPick} · ${teamName}${via}`;
+          const name = prefix.length > 0 ? `[#${prefix.join(', #')}, #${p.overall}] ${pickLabel}` : pickLabel;
+          return { name: name.slice(0, 100), value: displayValue };
+        });
+      await interaction.respond(choices);
+      return;
+    }
+
+    // Player autocomplete
+    if (focusedName === 'offer-players' || focusedName === 'receive-players') {
+      const teamAbbr = focusedName === 'offer-players' ? offerTeamAbbr : receiveTeamAbbr;
+      if (!teamAbbr) { await interaction.respond([]); return; }
+
+      const parts = focusedValue.split(',');
+      const currentFragment = parts[parts.length - 1].trim();
+      const prefix = parts.slice(0, -1).map(p => p.trim()).filter(Boolean);
+      const alreadyPicked = new Set(prefix.map(n => n.toLowerCase()));
+
+      const players = manager.searchRosterPlayers(teamAbbr, currentFragment);
+      const choices = players
+        .filter(p => !alreadyPicked.has(p.name.toLowerCase()))
+        .slice(0, 25)
+        .map(p => {
+          const displayValue = prefix.length > 0 ? `${prefix.join(',')},${p.name}` : p.name;
+          const name = prefix.length > 0 ? `[${prefix.join(', ')}, ${p.name}] (${p.pos})` : `${p.name} (${p.pos})`;
+          return { name: name.slice(0, 100), value: displayValue };
+        });
+      await interaction.respond(choices);
+      return;
+    }
+
+    // Future pick autocomplete
+    if (focusedName === 'offer-future' || focusedName === 'receive-future') {
+      const teamAbbr = focusedName === 'offer-future' ? offerTeamAbbr : receiveTeamAbbr;
+      if (!teamAbbr) { await interaction.respond([]); return; }
+
+      const rights = manager.getFuturePickRightsForTeam(teamAbbr);
+      const parts = focusedValue.replace(/\s/g, '').split(',');
+      const currentFragment = parts[parts.length - 1].toUpperCase();
+      const prefix = parts.slice(0, -1).map(p => p.trim().toUpperCase()).filter(Boolean);
+      const alreadyPicked = new Set(prefix);
+
+      const choices = rights
+        .filter(r => {
+          const key = `${r.year}R${r.round}`;
+          return !alreadyPicked.has(key) && key.includes(currentFragment);
+        })
+        .sort((a, b) => a.year - b.year || a.round - b.round)
+        .slice(0, 25)
+        .map(r => {
+          const key = `${r.year}R${r.round}`;
+          const via = r.originalTeam !== teamAbbr ? ` (via ${TEAMS[r.originalTeam]?.name ?? r.originalTeam})` : '';
+          const displayValue = prefix.length > 0 ? `${prefix.join(',')},${key}` : key;
+          const pickLabel = `${r.year} Round ${r.round}${via}`;
+          const name = prefix.length > 0 ? `[${prefix.join(', ')}, ${key}] ${pickLabel}` : pickLabel;
           return { name: name.slice(0, 100), value: displayValue };
         });
       await interaction.respond(choices);

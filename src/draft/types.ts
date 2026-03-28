@@ -72,13 +72,15 @@ export interface DraftState {
   schemaVersion: number;
   status: DraftStatus;
   config: DraftConfig;
-  assignments: Record<string, string>;  // teamAbbr -> userId
+  assignments: Record<string, string>;     // teamAbbr -> primary GM userId
+  coManagers: Record<string, string[]>;    // teamAbbr -> co-manager userIds
   schedule: PickSlot[];
   currentPickIndex: number;
   picks: CompletedPick[];
-  availableRanks: number[];             // prospect ranks still available
-  timerExpiresAt: number | null;        // Date.now() ms, for restart resilience
+  availableRanks: number[];                // prospect ranks still available
+  timerExpiresAt: number | null;           // Date.now() ms, for restart resilience
   pendingTrades: PendingTrade[];
+  tradeHistory: PendingTrade[];            // completed trades (for admin undo)
   playerOwnership: Record<string, string>; // playerName (lowercase) -> teamAbbr overrides
   futurePickRights: FuturePickRight[];     // tradeable future-year picks
 }

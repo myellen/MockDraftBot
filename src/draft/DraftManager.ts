@@ -41,12 +41,14 @@ const DEFAULT_STATE: DraftState = {
   status: 'idle',
   config: { channelId: null, timerSeconds: null, autoPick: true, rounds: 7 },
   assignments: {},
+  coManagers: {},
   schedule: [],
   currentPickIndex: 0,
   picks: [],
   availableRanks: [],
   timerExpiresAt: null,
   pendingTrades: [],
+  tradeHistory: [],
   playerOwnership: {},
   futurePickRights: buildFuturePickRights(),
 };
@@ -75,7 +77,9 @@ export class DraftManager {
         const raw = parsed as unknown as Record<string, unknown>;
         state = {
           ...parsed,
+          coManagers: (raw.coManagers as Record<string, string[]> | undefined) ?? {},
           pendingTrades: (raw.pendingTrades as PendingTrade[] | undefined) ?? [],
+          tradeHistory: (raw.tradeHistory as PendingTrade[] | undefined) ?? [],
           playerOwnership: (raw.playerOwnership as Record<string, string> | undefined) ?? {},
           futurePickRights: (raw.futurePickRights as FuturePickRight[] | undefined) ?? buildFuturePickRights(),
           config: { ...(parsed.config as DraftConfig), rounds: (parsed.config as DraftConfig).rounds ?? 7 },
@@ -193,9 +197,8 @@ export class DraftManager {
     const slot = this.state.schedule[this.state.currentPickIndex];
     if (!slot) return { success: false, error: 'No pick available.' };
 
-    // Verify user owns current team
-    const userTeam = this.getUserTeam(userId);
-    if (!userTeam || userTeam !== slot.currentTeam) {
+    // Verify user is authorized for current team
+    if (!this.isAuthorizedForTeam(userId, slot.currentTeam)) {
       const onClock = TEAMS[slot.currentTeam]?.name ?? slot.currentTeam;
       return { success: false, error: `It's not your pick. The **${onClock}** are on the clock.` };
     }
@@ -222,13 +225,10 @@ export class DraftManager {
     const slot = this.state.schedule[this.state.currentPickIndex];
     if (!slot) return { success: false, error: 'No pick available.' };
 
-    // If userId provided, verify ownership
-    if (userId !== null) {
-      const userTeam = this.getUserTeam(userId);
-      if (!userTeam || userTeam !== slot.currentTeam) {
-        const onClock = TEAMS[slot.currentTeam]?.name ?? slot.currentTeam;
-        return { success: false, error: `It's not your pick. The **${onClock}** are on the clock.` };
-      }
+    // If userId provided, verify authorization
+    if (userId !== null && !this.isAuthorizedForTeam(userId, slot.currentTeam)) {
+      const onClock = TEAMS[slot.currentTeam]?.name ?? slot.currentTeam;
+      return { success: false, error: `It's not your pick. The **${onClock}** are on the clock.` };
     }
 
     const bestRank = this.state.availableRanks[0];
@@ -392,8 +392,19 @@ export class DraftManager {
   }
 
   getUserTeam(userId: string): string | null {
-    const entry = Object.entries(this.state.assignments).find(([, uid]) => uid === userId);
-    return entry ? entry[0] : null;
+    const primary = Object.entries(this.state.assignments).find(([, uid]) => uid === userId);
+    if (primary) return primary[0];
+    const co = Object.entries(this.state.coManagers).find(([, uids]) => uids.includes(userId));
+    return co ? co[0] : null;
+  }
+
+  isPrimaryGM(userId: string, teamAbbr: string): boolean {
+    return this.state.assignments[teamAbbr] === userId;
+  }
+
+  isAuthorizedForTeam(userId: string, teamAbbr: string): boolean {
+    return this.state.assignments[teamAbbr] === userId ||
+      (this.state.coManagers[teamAbbr] ?? []).includes(userId);
   }
 
   getUnassignedTeams(): string[] {
@@ -722,7 +733,7 @@ export class DraftManager {
 
     const trade = this.state.pendingTrades.find(t => t.id === tradeId);
     if (!trade) return { success: false, error: 'Trade not found or expired.' };
-    if (trade.receiverUserId !== userId) return { success: false, error: 'This trade was not sent to you.' };
+    if (!this.isAuthorizedForTeam(userId, trade.receiverTeam)) return { success: false, error: 'This trade was not sent to you.' };
 
     const futurePicks = this.state.schedule.slice(this.state.currentPickIndex);
 
@@ -769,6 +780,9 @@ export class DraftManager {
       if (right) right.currentTeam = trade.proposerTeam;
     }
 
+    // Save to history before removing
+    this.state.tradeHistory.push(trade);
+
     // Remove this trade and cancel any overlapping pending trades
     const involved = new Set([...trade.offeredOveralls, ...trade.requestedOveralls]);
     this.state.pendingTrades = this.state.pendingTrades.filter(t =>
@@ -796,13 +810,175 @@ export class DraftManager {
   ): Promise<{ success: boolean; error?: string }> {
     const trade = this.state.pendingTrades.find(t => t.id === tradeId);
     if (!trade) return { success: false, error: 'Trade not found or expired.' };
-    if (trade.receiverUserId !== userId && trade.proposerUserId !== userId) {
+    if (!this.isAuthorizedForTeam(userId, trade.proposerTeam) && !this.isAuthorizedForTeam(userId, trade.receiverTeam)) {
       return { success: false, error: 'You are not part of this trade.' };
     }
 
     this.state.pendingTrades = this.state.pendingTrades.filter(t => t.id !== tradeId);
     await this.persist();
     return { success: true };
+  }
+
+  // ─── Co-Manager Management ────────────────────────────────────────────────
+
+  async addCoManager(requesterId: string, coManagerId: string): Promise<{ success: boolean; error?: string }> {
+    const team = this.getUserTeam(requesterId);
+    if (!team) return { success: false, error: 'You do not have a registered team.' };
+    if (!this.isPrimaryGM(requesterId, team)) return { success: false, error: 'Only the primary GM can manage co-managers.' };
+    if (this.getUserTeam(coManagerId)) return { success: false, error: 'That user already has a team or is a co-manager.' };
+    if (!this.state.coManagers[team]) this.state.coManagers[team] = [];
+    if (this.state.coManagers[team].includes(coManagerId)) return { success: false, error: 'That user is already a co-manager for your team.' };
+    this.state.coManagers[team].push(coManagerId);
+    await this.persist();
+    return { success: true };
+  }
+
+  async removeCoManager(requesterId: string, coManagerId: string): Promise<{ success: boolean; error?: string }> {
+    const team = this.getUserTeam(requesterId);
+    if (!team) return { success: false, error: 'You do not have a registered team.' };
+    if (!this.isPrimaryGM(requesterId, team)) return { success: false, error: 'Only the primary GM can manage co-managers.' };
+    const list = this.state.coManagers[team] ?? [];
+    if (!list.includes(coManagerId)) return { success: false, error: 'That user is not a co-manager for your team.' };
+    this.state.coManagers[team] = list.filter(id => id !== coManagerId);
+    await this.persist();
+    return { success: true };
+  }
+
+  getCoManagers(teamAbbr: string): string[] {
+    return this.state.coManagers[teamAbbr] ?? [];
+  }
+
+  // ─── Admin Operations ─────────────────────────────────────────────────────
+
+  async adminAssignTeam(teamAbbr: string, userId: string): Promise<{ success: boolean; error?: string }> {
+    if (!TEAMS[teamAbbr]) return { success: false, error: `Unknown team: ${teamAbbr}` };
+    // Remove user from any existing team
+    for (const abbr of Object.keys(this.state.assignments)) {
+      if (this.state.assignments[abbr] === userId) delete this.state.assignments[abbr];
+    }
+    // Remove as co-manager anywhere
+    for (const abbr of Object.keys(this.state.coManagers)) {
+      this.state.coManagers[abbr] = this.state.coManagers[abbr].filter(id => id !== userId);
+    }
+    this.state.assignments[teamAbbr] = userId;
+    await this.persist();
+    return { success: true };
+  }
+
+  async adminAddCoManager(teamAbbr: string, userId: string): Promise<{ success: boolean; error?: string }> {
+    if (!TEAMS[teamAbbr]) return { success: false, error: `Unknown team: ${teamAbbr}` };
+    if (!this.state.assignments[teamAbbr]) return { success: false, error: `No GM registered for ${teamAbbr}.` };
+    if (this.getUserTeam(userId)) return { success: false, error: 'That user already has a team or is a co-manager.' };
+    if (!this.state.coManagers[teamAbbr]) this.state.coManagers[teamAbbr] = [];
+    if (this.state.coManagers[teamAbbr].includes(userId)) return { success: false, error: 'That user is already a co-manager for that team.' };
+    this.state.coManagers[teamAbbr].push(userId);
+    await this.persist();
+    return { success: true };
+  }
+
+  async adminUndoTrade(tradeId: string): Promise<{ success: boolean; error?: string }> {
+    const trade = this.state.tradeHistory.find(t => t.id === tradeId);
+    if (!trade) return { success: false, error: 'Trade not found in history.' };
+
+    // Reverse pick ownership
+    for (const overall of trade.offeredOveralls) {
+      const slot = this.state.schedule.find(s => s.overall === overall);
+      if (slot) slot.currentTeam = trade.proposerTeam;
+    }
+    for (const overall of trade.requestedOveralls) {
+      const slot = this.state.schedule.find(s => s.overall === overall);
+      if (slot) slot.currentTeam = trade.receiverTeam;
+    }
+
+    // Reverse player ownership
+    for (const name of trade.offeredPlayers) {
+      this.state.playerOwnership[name.toLowerCase()] = trade.proposerTeam;
+    }
+    for (const name of trade.requestedPlayers) {
+      this.state.playerOwnership[name.toLowerCase()] = trade.receiverTeam;
+    }
+
+    // Reverse future pick rights
+    for (const id of trade.offeredFuturePicks) {
+      const right = this.state.futurePickRights.find(r => r.id === id);
+      if (right) right.currentTeam = trade.proposerTeam;
+    }
+    for (const id of trade.requestedFuturePicks) {
+      const right = this.state.futurePickRights.find(r => r.id === id);
+      if (right) right.currentTeam = trade.receiverTeam;
+    }
+
+    this.state.tradeHistory = this.state.tradeHistory.filter(t => t.id !== tradeId);
+    await this.persist();
+    return { success: true };
+  }
+
+  async adminForceTrade(
+    proposerTeam: string,
+    receiverTeam: string,
+    offeredOveralls: number[],
+    requestedOveralls: number[],
+    offeredPlayers: string[],
+    requestedPlayers: string[],
+    offeredFuturePickIds: string[],
+    requestedFuturePickIds: string[]
+  ): Promise<{ success: boolean; error?: string; trade?: PendingTrade }> {
+    const trade: PendingTrade = {
+      id: generateTradeId(),
+      proposerUserId: 'admin',
+      proposerTeam,
+      receiverUserId: 'admin',
+      receiverTeam,
+      offeredOveralls,
+      requestedOveralls,
+      offeredPlayers,
+      requestedPlayers,
+      offeredFuturePicks: offeredFuturePickIds,
+      requestedFuturePicks: requestedFuturePickIds,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+    };
+
+    // Execute immediately
+    for (const overall of offeredOveralls) {
+      const slot = this.state.schedule.find(s => s.overall === overall);
+      if (slot) { slot.currentTeam = receiverTeam; slot.isTraded = true; }
+    }
+    for (const overall of requestedOveralls) {
+      const slot = this.state.schedule.find(s => s.overall === overall);
+      if (slot) { slot.currentTeam = proposerTeam; slot.isTraded = true; }
+    }
+    for (const name of offeredPlayers) {
+      this.state.playerOwnership[name.toLowerCase()] = receiverTeam;
+    }
+    for (const name of requestedPlayers) {
+      this.state.playerOwnership[name.toLowerCase()] = proposerTeam;
+    }
+    for (const id of offeredFuturePickIds) {
+      const right = this.state.futurePickRights.find(r => r.id === id);
+      if (right) right.currentTeam = receiverTeam;
+    }
+    for (const id of requestedFuturePickIds) {
+      const right = this.state.futurePickRights.find(r => r.id === id);
+      if (right) right.currentTeam = proposerTeam;
+    }
+
+    this.state.tradeHistory.push(trade);
+    await this.persist();
+    await this.sendEmbed(buildTradeExecutedEmbed(trade, TEAMS, this.state.schedule));
+
+    const currentSlot = this.state.schedule[this.state.currentPickIndex];
+    const involved = new Set([...offeredOveralls, ...requestedOveralls]);
+    if (currentSlot && involved.has(currentSlot.overall)) {
+      this.clearTimer();
+      await this.refreshClock();
+    }
+
+    return { success: true, trade };
+  }
+
+  getTradeHistory(): PendingTrade[] {
+    return this.state.tradeHistory;
   }
 
   private async refreshClock(): Promise<void> {
