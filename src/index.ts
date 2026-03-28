@@ -8,16 +8,27 @@ if (!token) throw new Error('Missing DISCORD_TOKEN in environment');
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-let manager: DraftManager;
+const managers = new Map<string, DraftManager>();
+let clientReady = false;
 
-client.once(Events.ClientReady, async (c) => {
+async function getManager(guildId: string): Promise<DraftManager> {
+  if (!managers.has(guildId)) {
+    const m = await DraftManager.load(client, guildId);
+    managers.set(guildId, m);
+    console.log(`📋 Loaded draft state for guild ${guildId} (status: ${m.getState().status})`);
+  }
+  return managers.get(guildId)!;
+}
+
+client.once(Events.ClientReady, (c) => {
   console.log(`✅ Logged in as ${c.user.tag}`);
-  manager = await DraftManager.load(client);
-  console.log(`📋 Draft state loaded (status: ${manager.getState().status})`);
+  clientReady = true;
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
-  if (!manager) return; // not ready yet
+  if (!clientReady || !interaction.guildId) return;
+
+  const manager = await getManager(interaction.guildId);
 
   if (interaction.isChatInputCommand()) {
     const command = commandMap.get(interaction.commandName);

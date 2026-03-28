@@ -12,7 +12,9 @@ import { TEAMS } from '../data/teams';
 import { ROSTERS } from '../data/rosters';
 import { buildPickEmbed, buildOnTheClockEmbed, buildDraftCompleteEmbed, buildTeamRosterEmbed, buildTradeExecutedEmbed } from '../utils/embeds';
 
-const STATE_PATH = path.join(__dirname, '../../data/draft-state.json');
+function statePath(guildId: string): string {
+  return path.join(__dirname, `../../data/draft-state-${guildId}.json`);
+}
 
 function buildFuturePickRights(): FuturePickRight[] {
   const rights: FuturePickRight[] = [];
@@ -51,22 +53,26 @@ const DEFAULT_STATE: DraftState = {
   tradeHistory: [],
   playerOwnership: {},
   futurePickRights: buildFuturePickRights(),
+  customBoards: {},
+  positionPriority: {},
 };
 
 export class DraftManager {
   private state: DraftState;
   private timerHandle: NodeJS.Timeout | null = null;
   private client: Client;
+  private guildId: string;
 
-  private constructor(client: Client, state: DraftState) {
+  private constructor(client: Client, state: DraftState, guildId: string) {
     this.client = client;
     this.state = state;
+    this.guildId = guildId;
   }
 
-  static async load(client: Client): Promise<DraftManager> {
+  static async load(client: Client, guildId: string): Promise<DraftManager> {
     let state: DraftState;
     try {
-      const raw = await fs.readFile(STATE_PATH, 'utf-8');
+      const raw = await fs.readFile(statePath(guildId), 'utf-8');
       const parsed = JSON.parse(raw) as DraftState;
       // Basic schema check
       if (parsed.schemaVersion !== 1) {
@@ -82,6 +88,8 @@ export class DraftManager {
           tradeHistory: (raw.tradeHistory as PendingTrade[] | undefined) ?? [],
           playerOwnership: (raw.playerOwnership as Record<string, string> | undefined) ?? {},
           futurePickRights: (raw.futurePickRights as FuturePickRight[] | undefined) ?? buildFuturePickRights(),
+          customBoards: (raw.customBoards as Record<string, number[]> | undefined) ?? {},
+          positionPriority: (raw.positionPriority as Record<string, string[]> | undefined) ?? {},
           config: { ...(parsed.config as DraftConfig), rounds: (parsed.config as DraftConfig).rounds ?? 7 },
         };
         // Backfill arrays on existing trades
@@ -100,7 +108,7 @@ export class DraftManager {
       state = { ...DEFAULT_STATE };
     }
 
-    const manager = new DraftManager(client, state);
+    const manager = new DraftManager(client, state, guildId);
 
     // Restore timer if draft was active on restart
     client.once('ready', () => manager.restoreTimer());
@@ -109,11 +117,12 @@ export class DraftManager {
   }
 
   private async persist(): Promise<void> {
+    const p = statePath(this.guildId);
     const json = JSON.stringify(this.state, null, 2);
-    const tmp = STATE_PATH + '.tmp';
-    await fs.mkdir(path.dirname(STATE_PATH), { recursive: true });
+    const tmp = p + '.tmp';
+    await fs.mkdir(path.dirname(p), { recursive: true });
     await fs.writeFile(tmp, json, 'utf-8');
-    await fs.rename(tmp, STATE_PATH);
+    await fs.rename(tmp, p);
   }
 
   // ─── Setup ────────────────────────────────────────────────────────────────
@@ -218,6 +227,92 @@ export class DraftManager {
     return { success: true, pick };
   }
 
+  // ─── Custom Board / Position Priority ────────────────────────────────────
+
+  /** Fallback chain: custom board → position priority → default rank order */
+  private getBestPickForTeam(teamAbbr: string): number | undefined {
+    const available = new Set(this.state.availableRanks);
+
+    const board = this.state.customBoards[teamAbbr];
+    if (board?.length) {
+      const pick = board.find(rank => available.has(rank));
+      if (pick !== undefined) return pick;
+    }
+
+    const priority = this.state.positionPriority[teamAbbr];
+    if (priority?.length) {
+      for (const pos of priority) {
+        const pick = this.state.availableRanks.find(rank => PROSPECT_BY_RANK.get(rank)?.pos === pos);
+        if (pick !== undefined) return pick;
+      }
+    }
+
+    return this.state.availableRanks[0];
+  }
+
+  submitBoard(teamAbbr: string, rankedNames: string[]): { matched: number; unmatched: string[] } {
+    const nameToRank = new Map<string, number>();
+    for (const [rank, p] of PROSPECT_BY_RANK) nameToRank.set(p.name.toLowerCase(), rank);
+
+    const ranks: number[] = [];
+    const unmatched: string[] = [];
+    for (const name of rankedNames) {
+      const rank = nameToRank.get(name.toLowerCase());
+      if (rank !== undefined) ranks.push(rank);
+      else unmatched.push(name);
+    }
+    this.state.customBoards[teamAbbr] = ranks;
+    void this.persist();
+    return { matched: ranks.length, unmatched };
+  }
+
+  setPositionPriority(teamAbbr: string, positions: string[]): void {
+    this.state.positionPriority[teamAbbr] = positions;
+    void this.persist();
+  }
+
+  clearBoard(teamAbbr: string, what: 'board' | 'priority' | 'all'): void {
+    if (what === 'board' || what === 'all') delete this.state.customBoards[teamAbbr];
+    if (what === 'priority' || what === 'all') delete this.state.positionPriority[teamAbbr];
+    void this.persist();
+  }
+
+  getCustomBoard(teamAbbr: string): number[] {
+    return this.state.customBoards[teamAbbr] ?? [];
+  }
+
+  getPositionPriority(teamAbbr: string): string[] {
+    return this.state.positionPriority[teamAbbr] ?? [];
+  }
+
+  getMyBoardPage(teamAbbr: string, page: number, pageSize = 20): {
+    entries: { boardPos: number; rank: number; name: string; pos: string; school: string; available: boolean }[];
+    total: number;
+    totalPages: number;
+    page: number;
+  } {
+    const board = this.state.customBoards[teamAbbr] ?? [];
+    const available = new Set(this.state.availableRanks);
+    const total = board.length;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const safePage = Math.min(Math.max(1, page), totalPages);
+    const slice = board.slice((safePage - 1) * pageSize, safePage * pageSize);
+    const entries = slice.map((rank, i) => {
+      const p = PROSPECT_BY_RANK.get(rank);
+      return {
+        boardPos: (safePage - 1) * pageSize + i + 1,
+        rank,
+        name: p?.name ?? `#${rank}`,
+        pos: p?.pos ?? '?',
+        school: p?.school ?? '?',
+        available: available.has(rank),
+      };
+    });
+    return { entries, total, totalPages, page: safePage };
+  }
+
+  // ─── Auto-pick ────────────────────────────────────────────────────────────
+
   async autoPick(userId: string | null): Promise<PickResult> {
     if (this.state.status !== 'active') {
       return { success: false, error: 'The draft is not currently active.' };
@@ -231,7 +326,7 @@ export class DraftManager {
       return { success: false, error: `It's not your pick. The **${onClock}** are on the clock.` };
     }
 
-    const bestRank = this.state.availableRanks[0];
+    const bestRank = this.getBestPickForTeam(slot.currentTeam);
     if (bestRank === undefined) return { success: false, error: 'No prospects available.' };
 
     this.clearTimer();
@@ -296,7 +391,7 @@ export class DraftManager {
 
       if (!userId && this.state.config.autoPick) {
         // CPU pick — pick best available immediately
-        const bestRank = this.state.availableRanks[0];
+        const bestRank = this.getBestPickForTeam(slot.currentTeam);
         if (bestRank === undefined) break;
         await this.recordAndAnnounce(slot, bestRank, null, true);
         this.state.currentPickIndex++;
@@ -989,7 +1084,7 @@ export class DraftManager {
 
     if (!userId && this.state.config.autoPick) {
       // New owner is CPU — pick immediately
-      const bestRank = this.state.availableRanks[0];
+      const bestRank = this.getBestPickForTeam(slot.currentTeam);
       if (bestRank === undefined) return;
       await this.recordAndAnnounce(slot, bestRank, null, true);
       this.state.currentPickIndex++;

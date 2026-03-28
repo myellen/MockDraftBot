@@ -46,10 +46,10 @@ export async function execute(
         inline: false,
       },
       {
-        name: '4️⃣ Browse Available Players — `/board`',
+        name: '4️⃣ Browse Available Players — `/board view`',
         value:
           'See who\'s still on the board.\n' +
-          '> `/board` — shows top available players (paginated)\n' +
+          '> `/board view` — shows top available players (paginated)\n' +
           'Optional filters: position (QB, WR, CB, etc.) and page number.',
         inline: false,
       },
@@ -73,6 +73,25 @@ export async function execute(
           'See a full snapshot of a team\'s remaining draft picks, future pick rights, and current roster.\n' +
           '> `/inventory` — your own team\n' +
           '> `/inventory gm:@user` — any other GM\'s team',
+        inline: false,
+      },
+      {
+        name: '8️⃣ Custom Draft Board — `/board submit` · `/board priority`',
+        value:
+          'Control what the bot picks for you when you\'re away or skip your turn.\n' +
+          '> `/board submit file:` — upload a `.txt` file with player names in your preferred order (one per line). Partial boards are fine — any number of players.\n' +
+          '> `/board priority positions:` — set position priority for autopick (e.g. `QB,OT,EDGE`). Use the dropdown to build the list.\n' +
+          '> `/board myboard` — view your submitted board and see which players are still available\n' +
+          '> `/board clear` — remove your board, priority, or both\n\n' +
+          '**Fallback order:** your board → position priority → default rank order.',
+        inline: false,
+      },
+      {
+        name: '9️⃣ Co-Managers — `/draft add-comanager` · `/draft remove-comanager`',
+        value:
+          'Add a trusted person to help manage your team. Co-managers can make picks and propose/accept trades.\n' +
+          '> `/draft add-comanager user:@user` — add a co-manager to your team\n' +
+          '> `/draft remove-comanager user:@user` — remove a co-manager',
         inline: false,
       },
     );
@@ -125,5 +144,46 @@ export async function execute(
       },
     );
 
-  await interaction.reply({ embeds: [overview, trading], ephemeral: true });
+  const admin = new EmbedBuilder()
+    .setColor(color)
+    .setTitle('🔧 Admin Commands')
+    .setDescription('These commands require **Administrator** permission.')
+    .addFields(
+      {
+        name: 'Draft Setup — `/draft setup`',
+        value:
+          'Configure the draft before it starts.\n' +
+          '• `channel` — where pick announcements are posted\n' +
+          '• `timer` — seconds per pick (0 = no timer)\n' +
+          '• `autopick` — whether the bot auto-picks for unregistered teams\n' +
+          '• `rounds` — how many rounds to run (1–7, default 7)',
+        inline: false,
+      },
+      {
+        name: 'Draft Control — `/draft start` · `pause` · `resume` · `reset` · `rewind`',
+        value:
+          '• `/draft start` — begin the draft\n' +
+          '• `/draft pause` / `resume` — freeze and unfreeze\n' +
+          '• `/draft reset` — wipe all state and start over\n' +
+          '• `/draft rewind round: pick:` — roll back to any pick',
+        inline: false,
+      },
+      {
+        name: 'Override Commands — `/draft admin`',
+        value:
+          '• `/draft admin assign team: user:` — assign any team to any user\n' +
+          '• `/draft admin co-manager team: user:` — add a co-manager to any team\n' +
+          '• `/draft admin undo-trade id:` — reverse a completed trade (autocomplete shows history)',
+        inline: false,
+      },
+      {
+        name: 'Force Trade — `/trade force`',
+        value:
+          'Execute a trade immediately between any two teams without a proposal/acceptance flow.\n' +
+          '> `/trade force offer-team: receive-team:` plus the same pick/player/future fields as `/trade propose`',
+        inline: false,
+      },
+    );
+
+  await interaction.reply({ embeds: [overview, trading, admin], ephemeral: true });
 }

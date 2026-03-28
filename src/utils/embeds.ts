@@ -85,6 +85,32 @@ export function buildBoardEmbed(
     .setFooter({ text: `Page ${page}/${totalPages} · ${total} available` });
 }
 
+export function buildMyBoardEmbed(
+  teamName: string,
+  entries: { boardPos: number; rank: number; name: string; pos: string; school: string; available: boolean }[],
+  page: number,
+  totalPages: number,
+  total: number,
+  positionPriority: string[]
+): EmbedBuilder {
+  const rows = entries.map(e => {
+    const line = `**${e.boardPos}.** \`#${String(e.rank).padStart(3, ' ')}\` ${e.name} — ${e.pos}, ${e.school}`;
+    return e.available ? line : `~~${line}~~`;
+  }).join('\n');
+
+  const embed = new EmbedBuilder()
+    .setColor(DEFAULT_COLOR)
+    .setTitle(`📋 ${teamName} — Custom Board`)
+    .setDescription(rows || 'No players on your board yet. Use `/board submit` to upload one.');
+
+  if (positionPriority.length > 0) {
+    embed.addFields({ name: 'Position Priority', value: positionPriority.join(' → '), inline: false });
+  }
+
+  embed.setFooter({ text: `Page ${page}/${totalPages} · ${total} players on board · ~~struck through~~ = already drafted` });
+  return embed;
+}
+
 function formatPickList(overalls: number[], schedule: PickSlot[], teams: Record<string, Team>): string {
   return overalls.map(o => {
     const slot = schedule.find(s => s.overall === o);
