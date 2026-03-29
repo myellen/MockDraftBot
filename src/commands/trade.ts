@@ -194,7 +194,7 @@ export async function execute(
         if (!m) return `Invalid future pick format "${entry}". Use e.g. 2027R1,2028R3`;
         const year = parseInt(m[1], 10);
         const round = parseInt(m[2], 10);
-        if (year < 2027 || year > 2029) return `Year must be 2027–2029 (got ${year})`;
+        if (year < 2027 || year > 2028) return `Year must be 2027–2028 (got ${year})`;
         if (round < 1 || round > 7) return `Round must be 1–7 (got ${round})`;
         const right = manager.resolveFuturePickRight(teamAbbr, year, round);
         if (!right) return `No ${year} Round ${round} pick found for your team.`;
@@ -392,7 +392,7 @@ export async function execute(
         if (!m) return `Invalid future pick format "${entry}". Use e.g. 2027R1,2028R3`;
         const year = parseInt(m[1], 10);
         const round = parseInt(m[2], 10);
-        if (year < 2027 || year > 2029) return `Year must be 2027–2029 (got ${year})`;
+        if (year < 2027 || year > 2028) return `Year must be 2027–2028 (got ${year})`;
         if (round < 1 || round > 7) return `Round must be 1–7 (got ${round})`;
         const right = manager.resolveFuturePickRight(teamAbbr, year, round);
         if (!right) return `No ${year} Round ${round} pick found for that team.`;

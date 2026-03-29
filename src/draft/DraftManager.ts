@@ -27,7 +27,7 @@ const DEFAULT_BOARD_DATA: BoardData = {
 
 function buildFuturePickRights(): FuturePickRight[] {
   const rights: FuturePickRight[] = [];
-  for (const year of [2027, 2028, 2029]) {
+  for (const year of [2027, 2028]) {
     for (const abbr of Object.keys(TEAMS)) {
       for (let round = 1; round <= 7; round++) {
         // Check if this pick was already traded before the draft started

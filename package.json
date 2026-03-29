@@ -7,7 +7,8 @@
     "build": "tsc",
     "start": "node build/index.js",
     "dev": "ts-node src/index.ts",
-    "deploy": "ts-node src/deploy-commands.ts"
+    "deploy": "ts-node src/deploy-commands.ts",
+    "gen-rosters": "ts-node scripts/generate-rosters.ts"
   },
   "dependencies": {
     "discord.js": "^14.19.3",

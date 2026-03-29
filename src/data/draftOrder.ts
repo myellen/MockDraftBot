@@ -1,6 +1,7 @@
 // 2026 NFL Draft — Complete pick order
 // Source: ESPN, NFL.com, Tankathon, NFL Football Operations (comp picks)
 // Verified: March 2026. Total: 257 picks (224 standard + 33 compensatory)
+// Updated: ATL/PHI Sydney Brown pick swap; LV R5 chain (→HOU); 2027/2028 future picks corrected
 // currentTeam = team currently holding the pick after all known trades
 
 export interface DraftPickEntry {
@@ -133,7 +134,7 @@ export const DRAFT_ORDER: DraftPickEntry[] = [
   { overall: 111, round: 4, roundPick: 11, originalTeam: 'MIA', currentTeam: 'DEN' }, // MIA→DEN (Jaylen Waddle)
   { overall: 112, round: 4, roundPick: 12, originalTeam: 'DAL', currentTeam: 'DAL' },
   { overall: 113, round: 4, roundPick: 13, originalTeam: 'IND', currentTeam: 'IND' },
-  { overall: 114, round: 4, roundPick: 14, originalTeam: 'ATL', currentTeam: 'ATL' },
+  { overall: 114, round: 4, roundPick: 14, originalTeam: 'ATL', currentTeam: 'PHI' }, // ATL→PHI (Sydney Brown)
   { overall: 115, round: 4, roundPick: 15, originalTeam: 'BAL', currentTeam: 'BAL' },
   { overall: 116, round: 4, roundPick: 16, originalTeam: 'TB',  currentTeam: 'TB'  },
   { overall: 117, round: 4, roundPick: 17, originalTeam: 'MIN', currentTeam: 'LV'  }, // MIN→LV (via JAX)
@@ -141,7 +142,7 @@ export const DRAFT_ORDER: DraftPickEntry[] = [
   { overall: 119, round: 4, roundPick: 19, originalTeam: 'CAR', currentTeam: 'CAR' },
   { overall: 120, round: 4, roundPick: 20, originalTeam: 'GB',  currentTeam: 'GB'  },
   { overall: 121, round: 4, roundPick: 21, originalTeam: 'PIT', currentTeam: 'PIT' },
-  { overall: 122, round: 4, roundPick: 22, originalTeam: 'PHI', currentTeam: 'PHI' },
+  { overall: 122, round: 4, roundPick: 22, originalTeam: 'PHI', currentTeam: 'ATL' }, // PHI→ATL (Sydney Brown)
   { overall: 123, round: 4, roundPick: 23, originalTeam: 'LAC', currentTeam: 'LAC' },
   { overall: 124, round: 4, roundPick: 24, originalTeam: 'JAX', currentTeam: 'JAX' },
   { overall: 125, round: 4, roundPick: 25, originalTeam: 'CHI', currentTeam: 'NE'  }, // CHI→NE
@@ -163,7 +164,7 @@ export const DRAFT_ORDER: DraftPickEntry[] = [
   { overall: 140, round: 4, roundPick: 40, originalTeam: 'NYJ', currentTeam: 'NYJ' }, // COMP
 
   // ── Round 5 (41 picks — 32 standard + 9 comp) ───────────────────────────
-  { overall: 141, round: 5, roundPick:  1, originalTeam: 'LV',  currentTeam: 'CLE' }, // LV→CLE
+  { overall: 141, round: 5, roundPick:  1, originalTeam: 'LV',  currentTeam: 'HOU' }, // LV→CLE (Pickett)→HOU (Tytus Howard)
   { overall: 142, round: 5, roundPick:  2, originalTeam: 'NYJ', currentTeam: 'TEN' }, // NYJ→TEN
   { overall: 143, round: 5, roundPick:  3, originalTeam: 'ARI', currentTeam: 'ARI' },
   { overall: 144, round: 5, roundPick:  4, originalTeam: 'TEN', currentTeam: 'TEN' },
@@ -222,7 +223,7 @@ export const DRAFT_ORDER: DraftPickEntry[] = [
   { overall: 194, round: 6, roundPick: 13, originalTeam: 'BAL', currentTeam: 'TEN' }, // BAL→TEN
   { overall: 195, round: 6, roundPick: 14, originalTeam: 'TB',  currentTeam: 'TB'  },
   { overall: 196, round: 6, roundPick: 15, originalTeam: 'IND', currentTeam: 'MIN' }, // IND→MIN
-  { overall: 197, round: 6, roundPick: 16, originalTeam: 'ATL', currentTeam: 'ATL' },
+  { overall: 197, round: 6, roundPick: 16, originalTeam: 'ATL', currentTeam: 'PHI' }, // ATL→PHI (Sydney Brown)
   { overall: 198, round: 6, roundPick: 17, originalTeam: 'MIN', currentTeam: 'NE'  }, // MIN→NE
   { overall: 199, round: 6, roundPick: 18, originalTeam: 'DET', currentTeam: 'CIN' }, // DET→CIN
   { overall: 200, round: 6, roundPick: 19, originalTeam: 'CAR', currentTeam: 'CAR' },
@@ -241,7 +242,7 @@ export const DRAFT_ORDER: DraftPickEntry[] = [
   { overall: 213, round: 6, roundPick: 32, originalTeam: 'SEA', currentTeam: 'DET' }, // SEA→DET
   // Comp picks
   { overall: 214, round: 6, roundPick: 33, originalTeam: 'PIT', currentTeam: 'IND' }, // PIT COMP→IND (Michael Pittman Jr.)
-  { overall: 215, round: 6, roundPick: 34, originalTeam: 'PHI', currentTeam: 'PHI' }, // COMP
+  { overall: 215, round: 6, roundPick: 34, originalTeam: 'PHI', currentTeam: 'ATL' }, // PHI COMP→ATL (Sydney Brown)
   { overall: 216, round: 6, roundPick: 35, originalTeam: 'PIT', currentTeam: 'PIT' }, // COMP
 
   // ── Round 7 (41 picks — 32 standard + 9 comp) ───────────────────────────
@@ -298,14 +299,44 @@ export const FUTURE_PICK_TRADES: {
   // 2027 — confirmed trades
   { year: 2027, round: 1, originalTeam: 'IND', currentTeam: 'NYJ' }, // Sauce Gardner
   { year: 2027, round: 1, originalTeam: 'GB',  currentTeam: 'DAL' }, // Micah Parsons
-  { year: 2027, round: 1, originalTeam: 'DAL', currentTeam: 'NYJ' }, // Quinnen Williams
+  { year: 2027, round: 1, originalTeam: 'DAL', currentTeam: 'NYJ' }, // Quinnen Williams (more favorable of DAL/GB picks; conditional on draft positions)
   { year: 2027, round: 1, originalTeam: 'LAR', currentTeam: 'KC'  }, // Trent McDuffie
   { year: 2027, round: 3, originalTeam: 'LAR', currentTeam: 'KC'  }, // Trent McDuffie
+  { year: 2027, round: 4, originalTeam: 'MIN', currentTeam: 'CAR' }, // Adam Thielen (MIN 4th → CAR)
+  { year: 2027, round: 4, originalTeam: 'DAL', currentTeam: 'GB'  }, // Rashan Gary (DAL 4th → GB)
+  { year: 2027, round: 5, originalTeam: 'CAR', currentTeam: 'MIN' }, // Adam Thielen (CAR 5th → MIN)
+  { year: 2027, round: 5, originalTeam: 'CHI', currentTeam: 'NE'  }, // Garrett Bradbury
   { year: 2027, round: 5, originalTeam: 'DAL', currentTeam: 'PIT' }, // George Pickens
-  { year: 2027, round: 6, originalTeam: 'PIT', currentTeam: 'DAL' }, // George Pickens (reverse)
-  { year: 2027, round: 7, originalTeam: 'NO',  currentTeam: 'DEN' }, // Devaughn Vele
-  { year: 2027, round: 7, originalTeam: 'HOU', currentTeam: 'DET' }, // David Montgomery
-  // 2028 — lower confidence, limited known trades
-  { year: 2028, round: 6, originalTeam: 'NO',  currentTeam: 'HOU' },
-  { year: 2028, round: 7, originalTeam: 'NO',  currentTeam: 'NE'  }, // Ja'Lynn Polk
+  { year: 2027, round: 5, originalTeam: 'HOU', currentTeam: 'CLE' }, // HOU 5th → CLE (part of 2025 Cam Robinson deal)
+  { year: 2027, round: 5, originalTeam: 'PIT', currentTeam: 'MIA' }, // Jalen Ramsey / Minkah Fitzpatrick (PIT 5th → MIA)
+  { year: 2027, round: 6, originalTeam: 'CLE', currentTeam: 'HOU' }, // Cam Robinson (CLE 6th → HOU)
+  { year: 2027, round: 6, originalTeam: 'GB',  currentTeam: 'PHI' }, // Darian Kinnard (GB 6th → PHI)
+  { year: 2027, round: 6, originalTeam: 'LAC', currentTeam: 'NO'  }, // Trevor Penning (LAC 6th → NO)
+  { year: 2027, round: 6, originalTeam: 'NO',  currentTeam: 'NE'  }, // Ja'Lynn Polk (NO 6th → NE)
+  { year: 2027, round: 6, originalTeam: 'PIT', currentTeam: 'DAL' }, // George Pickens (PIT 6th → DAL)
+  { year: 2027, round: 6, originalTeam: 'SF',  currentTeam: 'KC'  }, // Skyy Moore (SF 6th → KC)
+  { year: 2027, round: 7, originalTeam: 'BAL', currentTeam: 'PHI' }, // Jaire Alexander (BAL 7th → PHI)
+  { year: 2027, round: 7, originalTeam: 'HOU', currentTeam: 'CLE' }, // Cam Robinson (HOU 7th → CLE)
+  { year: 2027, round: 7, originalTeam: 'KC',  currentTeam: 'SF'  }, // Skyy Moore (KC 7th → SF)
+  { year: 2027, round: 7, originalTeam: 'LAR', currentTeam: 'LAC' }, // Odafe Oweh chain: LAR 7th → BAL → LAC
+  { year: 2027, round: 7, originalTeam: 'MIA', currentTeam: 'PIT' }, // Jalen Ramsey reverse (MIA 7th → PIT)
+  { year: 2027, round: 7, originalTeam: 'NO',  currentTeam: 'DEN' }, // Devaughn Vele (NO 7th → DEN)
+  { year: 2027, round: 7, originalTeam: 'NYJ', currentTeam: 'PHI' }, // Michael Carter II / John Metchie (NYJ 7th → PHI)
+  { year: 2027, round: 7, originalTeam: 'PHI', currentTeam: 'MIN' }, // Sam Howell trade (PHI 7th → MIN)
+  { year: 2027, round: 7, originalTeam: 'HOU', currentTeam: 'DET' }, // David Montgomery (unconfirmed: could be LAC 7th → DET)
+  // 2027 — conditional trades (PICK MAY OR MAY NOT TRANSFER)
+  { year: 2027, round: 6, originalTeam: 'KC',  currentTeam: 'NYJ' }, // Derrick Nnadi: KC conditional 6th → NYJ (conditions unknown)
+  { year: 2027, round: 6, originalTeam: 'NYJ', currentTeam: 'MIN' }, // Harrison Phillips: NYJ or KC 6th → MIN (unconfirmed which team's pick)
+  { year: 2027, round: 7, originalTeam: 'MIN', currentTeam: 'KC'  }, // Derrick Nnadi: MIN conditional 7th → KC via NYJ (conditions unknown)
+  { year: 2027, round: 7, originalTeam: 'MIA', currentTeam: 'NYG' }, // Darren Waller: MIA conditional 7th → NYG (conditions unknown)
+  { year: 2027, round: 7, originalTeam: 'SEA', currentTeam: 'ATL' }, // Michael Jerrell: SEA conditional 7th → ATL (conditions unknown)
+  // 2028 — confirmed trades
+  { year: 2028, round: 6, originalTeam: 'HOU', currentTeam: 'NO'  }, // Kai Kroeger (HOU 6th → NO)
+  { year: 2028, round: 6, originalTeam: 'NO',  currentTeam: 'DAL' }, // Asim Richards (NO 6th → DAL)
+  { year: 2028, round: 7, originalTeam: 'CLE', currentTeam: 'LAR' }, // K.T. Leveston (CLE 7th → LAR)
+  { year: 2028, round: 7, originalTeam: 'DAL', currentTeam: 'NO'  }, // Asim Richards reverse (DAL 7th → NO)
+  { year: 2028, round: 7, originalTeam: 'NE',  currentTeam: 'NO'  }, // Ja'Lynn Polk (NE 7th → NO)
+  { year: 2028, round: 7, originalTeam: 'NO',  currentTeam: 'HOU' }, // Kai Kroeger (NO 7th → HOU)
+  // 2028 — conditional trades (PICK MAY OR MAY NOT TRANSFER)
+  { year: 2028, round: 7, originalTeam: 'LAC', currentTeam: 'NYJ' }, // Ja'Sir Taylor: LAC conditional 7th → NYJ (conditions unknown)
 ];

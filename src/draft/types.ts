@@ -46,7 +46,7 @@ export interface DraftConfig {
 
 export interface FuturePickRight {
   id: string;           // e.g. "2027-R1-LV"
-  year: number;         // 2027, 2028, 2029
+  year: number;         // 2027, 2028
   round: number;        // 1-7
   originalTeam: string; // team the pick originally belongs to
   currentTeam: string;  // team that currently holds it

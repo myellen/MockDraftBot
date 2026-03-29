@@ -100,7 +100,7 @@ export async function execute(
     .setColor(color)
     .setTitle('🔄 Trading Guide')
     .setDescription(
-      'Teams can trade **draft picks**, **future year picks (2027–2029)**, and **NFL players**.\n' +
+      'Teams can trade **draft picks**, **future year picks (2027–2028)**, and **NFL players**.\n' +
       'Trades require the other GM to accept before they take effect.'
     )
     .addFields(
@@ -128,7 +128,7 @@ export async function execute(
       {
         name: 'View Your Trades & Picks — `/trade list`',
         value:
-          'Shows all your pending trades, your remaining picks in this draft, and your future year pick rights (2027–2029).',
+          'Shows all your pending trades, your remaining picks in this draft, and your future year pick rights (2027–2028).',
         inline: false,
       },
       {
