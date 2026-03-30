@@ -214,7 +214,7 @@ export const DRAFT_ORDER: DraftPickEntry[] = [
   { overall: 185, round: 6, roundPick:  4, originalTeam: 'LV',  currentTeam: 'LV'  },
   { overall: 186, round: 6, roundPick:  5, originalTeam: 'NYG', currentTeam: 'NYG' },
   { overall: 187, round: 6, roundPick:  6, originalTeam: 'WAS', currentTeam: 'WAS' },
-  { overall: 188, round: 6, roundPick:  7, originalTeam: 'CLE', currentTeam: 'SEA' }, // CLE→SEA
+  { overall: 188, round: 6, roundPick:  7, originalTeam: 'CLE', currentTeam: 'DET' }, // CLE→SEA→JAX→DET (Nick Harris / Roy Robertson-Harris / Aaron Glenn comp chain)
   { overall: 189, round: 6, roundPick:  8, originalTeam: 'CIN', currentTeam: 'CIN' },
   { overall: 190, round: 6, roundPick:  9, originalTeam: 'NO',  currentTeam: 'NO'  },
   { overall: 191, round: 6, roundPick: 10, originalTeam: 'KC',  currentTeam: 'NE'  }, // KC→NE
@@ -224,7 +224,7 @@ export const DRAFT_ORDER: DraftPickEntry[] = [
   { overall: 195, round: 6, roundPick: 14, originalTeam: 'TB',  currentTeam: 'TB'  },
   { overall: 196, round: 6, roundPick: 15, originalTeam: 'IND', currentTeam: 'MIN' }, // IND→MIN
   { overall: 197, round: 6, roundPick: 16, originalTeam: 'ATL', currentTeam: 'PHI' }, // ATL→PHI (Sydney Brown)
-  { overall: 198, round: 6, roundPick: 17, originalTeam: 'MIN', currentTeam: 'NE'  }, // MIN→NE
+  { overall: 198, round: 6, roundPick: 17, originalTeam: 'MIN', currentTeam: 'WAS' }, // MIN→HOU→VIK→SF→WAS (Cam Akers/Ed Ingram/Jordan Mason/Brian Robinson chain)
   { overall: 199, round: 6, roundPick: 18, originalTeam: 'DET', currentTeam: 'CIN' }, // DET→CIN
   { overall: 200, round: 6, roundPick: 19, originalTeam: 'CAR', currentTeam: 'CAR' },
   { overall: 201, round: 6, roundPick: 20, originalTeam: 'GB',  currentTeam: 'GB'  },
@@ -235,7 +235,7 @@ export const DRAFT_ORDER: DraftPickEntry[] = [
   { overall: 206, round: 6, roundPick: 25, originalTeam: 'CHI', currentTeam: 'CLE' }, // CHI→CLE
   { overall: 207, round: 6, roundPick: 26, originalTeam: 'HOU', currentTeam: 'LAR' }, // HOU→LAR
   { overall: 208, round: 6, roundPick: 27, originalTeam: 'BUF', currentTeam: 'LV'  }, // BUF→LV
-  { overall: 209, round: 6, roundPick: 28, originalTeam: 'SF',  currentTeam: 'WAS' }, // SF→WAS
+  { overall: 209, round: 6, roundPick: 28, originalTeam: 'SF',  currentTeam: 'NE'  }, // SF→NE (Keion White)
   { overall: 210, round: 6, roundPick: 29, originalTeam: 'LAR', currentTeam: 'KC'  }, // LAR→KC (Trent McDuffie)
   { overall: 211, round: 6, roundPick: 30, originalTeam: 'DEN', currentTeam: 'BAL' }, // DEN→BAL
   { overall: 212, round: 6, roundPick: 31, originalTeam: 'NE',  currentTeam: 'NE'  },
