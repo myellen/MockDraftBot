@@ -51,7 +51,8 @@ interface EspnAthlete {
 }
 
 interface EspnRosterGroup {
-  athletes: EspnAthlete[];
+  items?: EspnAthlete[];
+  athletes?: EspnAthlete[];
 }
 
 interface EspnRosterResponse {
@@ -67,7 +68,7 @@ async function fetchRoster(espnId: number, abbr: string): Promise<{ name: string
   const players: { name: string; pos: string; number: string | null }[] = [];
 
   for (const group of data.athletes ?? []) {
-    for (const athlete of group.athletes ?? []) {
+    for (const athlete of (group.items ?? group.athletes ?? [])) {
       const rawPos = athlete.position?.abbreviation ?? '';
       const pos = normalizePos(rawPos);
       if (!INCLUDE_POS.has(pos)) continue;
