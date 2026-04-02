@@ -50,7 +50,7 @@ function buildFuturePickRights(): FuturePickRight[] {
 const DEFAULT_STATE: DraftState = {
   schemaVersion: 1,
   status: 'idle',
-  config: { channelId: null, timerSeconds: null, autoPick: true, rounds: 7 },
+  config: { channelId: null, timerSeconds: null, autoPick: true, rounds: 7, allowPlayerTrades: true },
   assignments: {},
   coManagers: {},
   schedule: [],
@@ -97,7 +97,7 @@ export class DraftManager {
           tradeHistory: (raw.tradeHistory as PendingTrade[] | undefined) ?? [],
           playerOwnership: (raw.playerOwnership as Record<string, string> | undefined) ?? {},
           futurePickRights: (raw.futurePickRights as FuturePickRight[] | undefined) ?? buildFuturePickRights(),
-          config: { ...(parsed.config as DraftConfig), rounds: (parsed.config as DraftConfig).rounds ?? 7 },
+          config: { ...(parsed.config as DraftConfig), rounds: (parsed.config as DraftConfig).rounds ?? 7, allowPlayerTrades: (parsed.config as DraftConfig).allowPlayerTrades ?? true },
         };
         // Backfill arrays on existing trades
         state.pendingTrades = state.pendingTrades.map(t => {
@@ -152,6 +152,8 @@ export class DraftManager {
   }
 
   // ─── Setup ────────────────────────────────────────────────────────────────
+
+  getConfig(): DraftConfig { return this.state.config; }
 
   async setup(config: Partial<DraftConfig>): Promise<void> {
     this.state.config = { ...this.state.config, ...config };
@@ -788,6 +790,9 @@ export class DraftManager {
     if (this.state.status !== 'active' && this.state.status !== 'paused') {
       return { success: false, error: 'No active draft.' };
     }
+    if (!this.state.config.allowPlayerTrades && (offeredPlayers.length > 0 || requestedPlayers.length > 0)) {
+      return { success: false, error: 'Player trades are disabled for this draft. Only picks can be traded.' };
+    }
     if (offeredOveralls.length + offeredPlayers.length + offeredFuturePickIds.length === 0 ||
         requestedOveralls.length + requestedPlayers.length + requestedFuturePickIds.length === 0) {
       return { success: false, error: 'Must include at least one pick or player on each side.' };
@@ -1066,6 +1071,9 @@ export class DraftManager {
     offeredFuturePickIds: string[],
     requestedFuturePickIds: string[]
   ): Promise<{ success: boolean; error?: string; trade?: PendingTrade }> {
+    if (!this.state.config.allowPlayerTrades && (offeredPlayers.length > 0 || requestedPlayers.length > 0)) {
+      return { success: false, error: 'Player trades are disabled for this draft. Only picks can be traded.' };
+    }
     const trade: PendingTrade = {
       id: generateTradeId(),
       proposerUserId: 'admin',

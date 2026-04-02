@@ -544,6 +544,7 @@ export async function autocomplete(
 
     // Player autocomplete (append-mode: existing,new)
     if (focusedName === 'offer-players' || focusedName === 'receive-players') {
+      if (!manager.getConfig().allowPlayerTrades) { await interaction.respond([]); return; }
       const teamAbbr = focusedName === 'offer-players' ? proposerTeam : receiverTeam;
       if (!teamAbbr) { await interaction.respond([]); return; }
 
@@ -655,6 +656,7 @@ export async function autocomplete(
 
     // Player autocomplete
     if (focusedName === 'offer-players' || focusedName === 'receive-players') {
+      if (!manager.getConfig().allowPlayerTrades) { await interaction.respond([]); return; }
       const teamAbbr = focusedName === 'offer-players' ? offerTeamAbbr : receiveTeamAbbr;
       if (!teamAbbr) { await interaction.respond([]); return; }
 

@@ -42,6 +42,7 @@ export interface DraftConfig {
   timerSeconds: number | null;
   autoPick: boolean;
   rounds: number;   // how many rounds to simulate (default 7)
+  allowPlayerTrades: boolean; // whether players can be included in trades (default true)
 }
 
 export interface FuturePickRight {

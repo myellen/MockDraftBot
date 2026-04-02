@@ -38,6 +38,11 @@ export const data = new SlashCommandBuilder()
       .setMaxValue(7)
       .setRequired(false)
     )
+    .addBooleanOption(opt => opt
+      .setName('allow-player-trades')
+      .setDescription('Allow players in trades (default: true)')
+      .setRequired(false)
+    )
   )
   .addSubcommand(sub => sub
     .setName('register')
@@ -175,12 +180,14 @@ export async function execute(
     const timer = interaction.options.getInteger('timer') ?? null;
     const autopick = interaction.options.getBoolean('autopick') ?? true;
     const rounds = interaction.options.getInteger('rounds') ?? 7;
+    const allowPlayerTrades = interaction.options.getBoolean('allow-player-trades') ?? true;
 
     await manager.setup({
       channelId: channel.id,
       timerSeconds: timer === 0 ? null : (timer !== null ? timer * 60 : null),
       autoPick: autopick,
       rounds,
+      allowPlayerTrades,
     });
 
     const timerStr = timer ? `${timer}m per pick` : 'No timer';
@@ -194,6 +201,7 @@ export async function execute(
             { name: 'Timer',     value: timerStr,            inline: true },
             { name: 'Auto-Pick', value: autopick ? 'On' : 'Off', inline: true },
             { name: 'Rounds',    value: String(rounds),      inline: true },
+            { name: 'Player Trades', value: allowPlayerTrades ? 'On' : 'Off', inline: true },
           )
           .setDescription('Now have GMs register their teams with `/draft register`, then use `/draft start` when ready.')
       ]
