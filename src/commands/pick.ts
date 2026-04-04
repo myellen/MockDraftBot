@@ -1,6 +1,7 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction, AutocompleteInteraction, EmbedBuilder } from 'discord.js';
 import { DraftManager } from '../draft/DraftManager';
 import { TEAMS } from '../data/teams';
+import { ordinal } from '../utils/ordinal';
 
 export const data = new SlashCommandBuilder()
   .setName('pick')
@@ -47,7 +48,7 @@ export async function execute(
     return;
   }
 
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply();
   const result = await manager.makePick(interaction.user.id, rank);
 
   if (!result.success) {
@@ -61,10 +62,27 @@ export async function execute(
     embeds: [
       new EmbedBuilder()
         .setColor(team?.color ?? 0xFFB612)
-        .setTitle('✅ Pick Submitted!')
+        .setTitle(`With the ${ordinal(pick.overall)} pick in the NFL draft, the ${team?.name ?? pick.team} select:`)
         .setDescription(`**${pick.prospectName}** (${pick.pos}, ${pick.school})\nRound ${pick.round}, Pick ${pick.roundPick} · Overall #${pick.overall}`)
     ]
   });
+
+  // Announce who is now on the clock
+  const nextSlot = manager.getCurrentSlot();
+  if (nextSlot) {
+    const nextTeam = TEAMS[nextSlot.currentTeam];
+    const state = manager.getState();
+    const gmId = state.assignments[nextSlot.currentTeam];
+    const ping = gmId ? `<@${gmId}>` : 'No GM assigned';
+    await interaction.followUp({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(nextTeam?.color ?? 0xFFB612)
+          .setTitle(`🏈 ${nextTeam?.name ?? nextSlot.currentTeam} are on the clock!`)
+          .setDescription(`${ping} — Round ${nextSlot.round}, Pick ${nextSlot.roundPick} · Overall #${nextSlot.overall}`)
+      ]
+    });
+  }
 }
 
 export async function autocomplete(

@@ -275,6 +275,26 @@ export class DraftManager {
     return { success: true, pick };
   }
 
+  async adminMakePick(prospectRank: number): Promise<PickResult> {
+    if (this.state.status !== 'active') {
+      return { success: false, error: 'The draft is not currently active.' };
+    }
+    const slot = this.state.schedule[this.state.currentPickIndex];
+    if (!slot) return { success: false, error: 'No pick available.' };
+
+    if (!this.state.availableRanks.includes(prospectRank)) {
+      return { success: false, error: 'That player has already been drafted.' };
+    }
+
+    this.clearTimer();
+    const pick = await this.recordAndAnnounce(slot, prospectRank, 'admin', false);
+    this.state.currentPickIndex++;
+    await this.persist();
+    await this.advance();
+
+    return { success: true, pick };
+  }
+
   // ─── Custom Board / Position Priority ────────────────────────────────────
 
   /** Fallback chain: custom board → position priority → default rank order */

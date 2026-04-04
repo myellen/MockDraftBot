@@ -186,5 +186,6 @@ export async function execute(
       },
     );
 
-  await interaction.reply({ embeds: [overview, trading, admin], ephemeral: true });
+  await interaction.reply({ embeds: [overview, trading] });
+  await interaction.followUp({ embeds: [admin], ephemeral: true });
 }

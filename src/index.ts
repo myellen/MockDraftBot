@@ -37,12 +37,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await command.execute(interaction, manager);
     } catch (err) {
       console.error(`Error in /${interaction.commandName}:`, err);
-      const msg = { content: '❌ An error occurred. Please try again.', ephemeral: true };
-      if (interaction.replied || interaction.deferred) {
-        await interaction.followUp(msg);
-      } else {
-        await interaction.reply(msg);
-      }
+      try {
+        const msg = { content: '❌ An error occurred. Please try again.', ephemeral: true };
+        if (interaction.replied || interaction.deferred) {
+          await interaction.followUp(msg);
+        } else {
+          await interaction.reply(msg);
+        }
+      } catch { /* interaction expired or already handled */ }
     }
     return;
   }

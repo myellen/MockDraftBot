@@ -1,6 +1,7 @@
 import { EmbedBuilder } from 'discord.js';
 import { CompletedPick, PickSlot, PendingTrade, FuturePickRight } from '../draft/types';
 import { Team } from '../draft/types';
+import { ordinal } from './ordinal';
 
 const DEFAULT_COLOR = 0xFFB612;
 
@@ -12,13 +13,8 @@ export function buildPickEmbed(pick: CompletedPick, slot: PickSlot, team: Team):
   const label = pickLabel(pick.round, pick.roundPick);
   const embed = new EmbedBuilder()
     .setColor(team?.color ?? DEFAULT_COLOR)
-    .setTitle(`🏈 Pick ${label} — ${team?.name ?? pick.team}`)
-    .setDescription(`**${pick.prospectName}**`)
-    .addFields(
-      { name: 'Position', value: pick.pos, inline: true },
-      { name: 'School',   value: pick.school, inline: true },
-      { name: 'Overall',  value: `#${pick.overall}`, inline: true },
-    );
+    .setTitle(`With the ${ordinal(pick.overall)} pick in the NFL draft, the ${team?.name ?? pick.team} select:`)
+    .setDescription(`**${pick.prospectName}** (${pick.pos}, ${pick.school})\nRound ${pick.round}, Pick ${pick.roundPick} · Overall #${pick.overall}`);
 
   const footerParts: string[] = [];
   if (slot.isTraded) footerParts.push(`Via ${slot.originalTeam}`);
@@ -262,19 +258,33 @@ export function buildAssignmentsEmbed(
 
   const embed = new EmbedBuilder()
     .setColor(DEFAULT_COLOR)
-    .setTitle('🏈 Team Assignments')
-    .addFields(
-      {
-        name: `✅ Assigned (${assigned.length}/32)`,
-        value: assigned.length ? assigned.join('\n') : 'None yet',
-        inline: false,
-      },
-      {
-        name: `⬜ Available (${unassigned.length})`,
-        value: unassigned.length ? unassigned.join(', ') : 'All teams claimed!',
-        inline: false,
+    .setTitle('🏈 Team Assignments');
+
+  // Split assigned list into chunks to stay under Discord's 1024-char field limit
+  if (!assigned.length) {
+    embed.addFields({ name: `✅ Assigned (0/32)`, value: 'None yet', inline: false });
+  } else {
+    const chunks: string[][] = [[]];
+    for (const line of assigned) {
+      const current = chunks[chunks.length - 1];
+      if (current.join('\n').length + line.length + 1 > 1024) {
+        chunks.push([line]);
+      } else {
+        current.push(line);
       }
-    );
+    }
+    chunks.forEach((chunk, i) => {
+      const name = i === 0 ? `✅ Assigned (${assigned.length}/32)` : '\u200b';
+      embed.addFields({ name, value: chunk.join('\n'), inline: false });
+    });
+  }
+
+  embed.addFields({
+    name: `⬜ Available (${unassigned.length})`,
+    value: unassigned.length ? unassigned.join(', ') : 'All teams claimed!',
+    inline: false,
+  });
+
   return embed;
 }
 
