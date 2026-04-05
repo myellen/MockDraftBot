@@ -790,8 +790,10 @@ export class DraftManager {
 
   getPendingTradesForUser(userId: string): PendingTrade[] {
     this.cleanExpiredTrades();
+    const team = this.getUserTeam(userId);
+    if (!team) return [];
     return this.state.pendingTrades.filter(t =>
-      t.proposerUserId === userId || t.receiverUserId === userId
+      t.proposerTeam === team || t.receiverTeam === team
     );
   }
 
@@ -834,14 +836,12 @@ export class DraftManager {
       const slot = futurePicks.find(s => s.overall === overall);
       if (!slot) return { success: false, error: `Pick #${overall} is not a future pick.` };
       if (slot.currentTeam !== proposerTeam) return { success: false, error: `Pick #${overall} does not belong to your team (${TEAMS[proposerTeam]?.name}).` };
-      if (this.isPickInPendingTrade(overall)) return { success: false, error: `Pick #${overall} is already part of a pending trade.` };
     }
 
     for (const overall of requestedOveralls) {
       const slot = futurePicks.find(s => s.overall === overall);
       if (!slot) return { success: false, error: `Pick #${overall} is not a future pick.` };
       if (slot.currentTeam !== receiverTeam) return { success: false, error: `Pick #${overall} does not belong to ${TEAMS[receiverTeam]?.name}.` };
-      if (this.isPickInPendingTrade(overall)) return { success: false, error: `Pick #${overall} is already part of a pending trade.` };
     }
 
     // Validate offered players belong to proposer

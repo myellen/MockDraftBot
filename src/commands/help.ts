@@ -57,7 +57,8 @@ export async function execute(
         name: '5️⃣ Check Draft Progress — `/status`',
         value:
           'See who\'s on the clock, the current pick number, and the last few picks made.\n' +
-          '> `/status`',
+          '> `/status`\n' +
+          '> `/upcoming` — see the next upcoming picks with team names and GMs',
         inline: false,
       },
       {
@@ -139,7 +140,7 @@ export async function execute(
           '• Players can be entered by name or jersey number.\n' +
           '• Future picks use the format `YYYYRn` — e.g. `2027R1` for a 2027 first-round pick.\n' +
           '• Trades expire after **24 hours** if not accepted.\n' +
-          '• A pick can only be in one pending trade at a time.',
+          '• A pick can appear in multiple proposals — when one is accepted, overlapping trades are automatically cancelled.',
         inline: false,
       },
     );
@@ -156,7 +157,8 @@ export async function execute(
           '• `channel` — where pick announcements are posted\n' +
           '• `timer` — minutes per pick (0 = no timer)\n' +
           '• `autopick` — whether the bot auto-picks for unregistered teams\n' +
-          '• `rounds` — how many rounds to run (1–7, default 7)',
+          '• `rounds` — how many rounds to run (1–7, default 7)\n' +
+          '• `allow-player-trades` — toggle whether players can be included in trades (default: on)',
         inline: false,
       },
       {
@@ -174,7 +176,8 @@ export async function execute(
         value:
           '• `/draft admin assign team: user:` — assign any team to any user\n' +
           '• `/draft admin co-manager team: user:` — add a co-manager to any team\n' +
-          '• `/draft admin undo-trade id:` — reverse a completed trade (autocomplete shows history)',
+          '• `/draft admin undo-trade id:` — reverse a completed trade (autocomplete shows history)\n' +
+          '• `/draft admin pick` — make a pick for the team currently on the clock',
         inline: false,
       },
       {

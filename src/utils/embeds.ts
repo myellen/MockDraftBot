@@ -111,7 +111,7 @@ function formatPickList(overalls: number[], schedule: PickSlot[], teams: Record<
   return overalls.map(o => {
     const slot = schedule.find(s => s.overall === o);
     if (!slot) return `#${o}`;
-    return `R${slot.round}P${slot.roundPick} (#${o}) — ${teams[slot.currentTeam]?.name ?? slot.currentTeam}`;
+    return `R${slot.round}P${slot.roundPick} (#${o})`;
   }).join('\n');
 }
 

@@ -5,7 +5,7 @@ import {
 } from 'discord.js';
 import { DraftManager } from '../draft/DraftManager';
 import { TEAMS } from '../data/teams';
-import { buildPendingTradesEmbed } from '../utils/embeds';
+import { buildPendingTradesEmbed, buildTradeExecutedEmbed } from '../utils/embeds';
 import { isAdmin } from '../utils/permissions';
 
 export const data = new SlashCommandBuilder()
@@ -294,14 +294,16 @@ export async function execute(
 
   if (sub === 'accept') {
     const tradeId = interaction.options.getString('id', true).toUpperCase();
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply();
     const result = await manager.acceptTrade(interaction.user.id, tradeId);
 
     if (!result.success) {
       await interaction.editReply(`❌ ${result.error}`);
       return;
     }
-    await interaction.editReply(`✅ Trade **[${tradeId}]** accepted! Picks and players have been swapped.`);
+    const state = manager.getState();
+    const embed = buildTradeExecutedEmbed(result.trade!, TEAMS, state.schedule);
+    await interaction.editReply({ content: `✅ Trade **[${tradeId}]** accepted!`, embeds: [embed] });
     return;
   }
 
