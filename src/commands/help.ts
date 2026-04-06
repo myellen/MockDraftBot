@@ -165,7 +165,8 @@ export async function execute(
           '• `timer` — minutes per pick (0 = no timer)\n' +
           '• `autopick` — whether the bot auto-picks for unregistered teams\n' +
           '• `rounds` — how many rounds to run (1–7, default 7)\n' +
-          '• `allow-player-trades` — toggle whether players can be included in trades (default: on)',
+          '• `allow-player-trades` — toggle whether players can be included in trades (default: on)\n' +
+          '• `trade-announcement` — **private** (no notification), **public** (full details), or **intrigue** (ping without details, default)',
         inline: false,
       },
       {

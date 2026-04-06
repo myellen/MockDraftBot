@@ -37,12 +37,15 @@ export interface CompletedPick {
   pickedAt: number;        // Date.now()
 }
 
+export type TradeAnnouncement = 'private' | 'public' | 'intrigue';
+
 export interface DraftConfig {
   channelId: string | null;
   timerSeconds: number | null;
   autoPick: boolean;
   rounds: number;   // how many rounds to simulate (default 7)
   allowPlayerTrades: boolean; // whether players can be included in trades (default true)
+  tradeAnnouncement: TradeAnnouncement; // how trade proposals are announced (default 'intrigue')
 }
 
 export interface FuturePickRight {

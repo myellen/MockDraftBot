@@ -290,15 +290,32 @@ export async function execute(
       `**${receiverTeamName}** send: ${formatSide(requested, requestedPlayers, requestedFuture)}\n\n` +
       `${toUser} — use \`/trade accept ${trade.id}\` to accept, or \`/trade decline ${trade.id}\` to decline.`
     );
-    await interaction.followUp({
-      content: `<@${toUser.id}>`,
-      embeds: [
-        new EmbedBuilder()
-          .setColor(0x5865F2)
-          .setTitle('📞 Incoming Trade Offer!')
-          .setDescription(`<@${toUser.id}> has received a trade proposal. Check \`/trade list\` for details.`)
-      ]
-    });
+
+    const announcement = manager.getConfig().tradeAnnouncement;
+    if (announcement === 'public') {
+      await interaction.followUp({
+        content: `<@${toUser.id}>`,
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0x5865F2)
+            .setTitle('🔄 Trade Proposed')
+            .setDescription(
+              `**${proposerTeamName}** send: ${formatSide(offered, offeredPlayers, offeredFuture)}\n` +
+              `**${receiverTeamName}** send: ${formatSide(requested, requestedPlayers, requestedFuture)}`
+            )
+        ]
+      });
+    } else if (announcement === 'intrigue') {
+      await interaction.followUp({
+        content: `<@${toUser.id}>`,
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0x5865F2)
+            .setTitle('📞 Incoming Trade Offer!')
+            .setDescription(`<@${toUser.id}> has received a trade proposal. Check \`/trade list\` for details.`)
+        ]
+      });
+    }
     return;
   }
 

@@ -50,7 +50,7 @@ function buildFuturePickRights(): FuturePickRight[] {
 const DEFAULT_STATE: DraftState = {
   schemaVersion: 1,
   status: 'idle',
-  config: { channelId: null, timerSeconds: null, autoPick: true, rounds: 7, allowPlayerTrades: true },
+  config: { channelId: null, timerSeconds: null, autoPick: true, rounds: 7, allowPlayerTrades: true, tradeAnnouncement: 'intrigue' },
   assignments: {},
   coManagers: {},
   schedule: [],
@@ -97,7 +97,7 @@ export class DraftManager {
           tradeHistory: (raw.tradeHistory as PendingTrade[] | undefined) ?? [],
           playerOwnership: (raw.playerOwnership as Record<string, string> | undefined) ?? {},
           futurePickRights: (raw.futurePickRights as FuturePickRight[] | undefined) ?? buildFuturePickRights(),
-          config: { ...(parsed.config as DraftConfig), rounds: (parsed.config as DraftConfig).rounds ?? 7, allowPlayerTrades: (parsed.config as DraftConfig).allowPlayerTrades ?? true },
+          config: { ...(parsed.config as DraftConfig), rounds: (parsed.config as DraftConfig).rounds ?? 7, allowPlayerTrades: (parsed.config as DraftConfig).allowPlayerTrades ?? true, tradeAnnouncement: (parsed.config as DraftConfig).tradeAnnouncement ?? 'intrigue' },
         };
         // Backfill arrays on existing trades
         state.pendingTrades = state.pendingTrades.map(t => {

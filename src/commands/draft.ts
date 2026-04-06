@@ -7,6 +7,7 @@ import { TEAMS } from '../data/teams';
 import { isAdmin } from '../utils/permissions';
 import { buildAssignmentsEmbed } from '../utils/embeds';
 import { ordinal } from '../utils/ordinal';
+import { TradeAnnouncement } from '../draft/types';
 
 export const data = new SlashCommandBuilder()
   .setName('draft')
@@ -43,6 +44,16 @@ export const data = new SlashCommandBuilder()
       .setName('allow-player-trades')
       .setDescription('Allow players in trades (default: true)')
       .setRequired(false)
+    )
+    .addStringOption(opt => opt
+      .setName('trade-announcement')
+      .setDescription('How trade proposals are announced (default: intrigue)')
+      .setRequired(false)
+      .addChoices(
+        { name: 'Private — no public notification', value: 'private' },
+        { name: 'Public — full trade details shown publicly', value: 'public' },
+        { name: 'Intrigue — public ping without details', value: 'intrigue' },
+      )
     )
   )
   .addSubcommand(sub => sub
@@ -215,6 +226,7 @@ export async function execute(
     const autopick = interaction.options.getBoolean('autopick') ?? true;
     const rounds = interaction.options.getInteger('rounds') ?? 7;
     const allowPlayerTrades = interaction.options.getBoolean('allow-player-trades') ?? true;
+    const tradeAnnouncement = (interaction.options.getString('trade-announcement') ?? 'intrigue') as TradeAnnouncement;
 
     await manager.setup({
       channelId: channel.id,
@@ -222,6 +234,7 @@ export async function execute(
       autoPick: autopick,
       rounds,
       allowPlayerTrades,
+      tradeAnnouncement,
     });
 
     const timerStr = timer ? `${timer}m per pick` : 'No timer';
@@ -236,6 +249,7 @@ export async function execute(
             { name: 'Auto-Pick', value: autopick ? 'On' : 'Off', inline: true },
             { name: 'Rounds',    value: String(rounds),      inline: true },
             { name: 'Player Trades', value: allowPlayerTrades ? 'On' : 'Off', inline: true },
+            { name: 'Trade Announcements', value: tradeAnnouncement.charAt(0).toUpperCase() + tradeAnnouncement.slice(1), inline: true },
           )
           .setDescription('Now have GMs register their teams with `/draft register`, then use `/draft start` when ready.')
       ]
