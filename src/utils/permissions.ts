@@ -1,8 +1,8 @@
 import { ChatInputCommandInteraction, PermissionFlagsBits } from 'discord.js';
 
-const SUPER_ADMINS = new Set([
-  'REDACTED_USER_ID', // Max
-]);
+const SUPER_ADMINS = new Set(
+  (process.env.SUPER_ADMINS ?? '').split(',').map(s => s.trim()).filter(Boolean)
+);
 
 export function isAdmin(interaction: ChatInputCommandInteraction): boolean {
   if (SUPER_ADMINS.has(interaction.user.id)) return true;
