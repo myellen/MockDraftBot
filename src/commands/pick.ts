@@ -75,6 +75,7 @@ export async function execute(
     const gmId = state.assignments[nextSlot.currentTeam];
     const ping = gmId ? `<@${gmId}>` : 'No GM assigned';
     await interaction.followUp({
+      content: gmId ? `<@${gmId}>` : undefined,
       embeds: [
         new EmbedBuilder()
           .setColor(nextTeam?.color ?? 0xFFB612)

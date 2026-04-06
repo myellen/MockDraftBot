@@ -472,7 +472,7 @@ export class DraftManager {
       // Human's turn (or CPU without autoPick)
       const team = TEAMS[slot.currentTeam];
       const embed = buildOnTheClockEmbed(slot, team, userId, this.state.config.timerSeconds);
-      await this.sendEmbed(embed);
+      await this.sendEmbed(embed, userId ? `<@${userId}>` : undefined);
 
       if (this.state.config.timerSeconds && userId) {
         this.startTimer();
@@ -517,19 +517,23 @@ export class DraftManager {
 
   // ─── Channel sending ──────────────────────────────────────────────────────
 
-  private async sendEmbed(embed: import('discord.js').EmbedBuilder): Promise<void> {
-    await this.sendEmbeds([embed]);
+  private async sendEmbed(embed: import('discord.js').EmbedBuilder, content?: string): Promise<void> {
+    await this.sendMessage({ embeds: [embed], content });
   }
 
   private async sendEmbeds(embeds: import('discord.js').EmbedBuilder[]): Promise<void> {
+    await this.sendMessage({ embeds });
+  }
+
+  private async sendMessage(opts: { embeds?: import('discord.js').EmbedBuilder[]; content?: string }): Promise<void> {
     if (!this.state.config.channelId) return;
     try {
       const channel = await this.client.channels.fetch(this.state.config.channelId);
       if (channel && channel.isTextBased() && 'send' in channel) {
-        await (channel as TextChannel).send({ embeds });
+        await (channel as TextChannel).send(opts);
       }
     } catch (err) {
-      console.error('Failed to send embeds:', err);
+      console.error('Failed to send message:', err);
     }
   }
 
@@ -1172,7 +1176,7 @@ export class DraftManager {
 
     const team = TEAMS[slot.currentTeam];
     const embed = buildOnTheClockEmbed(slot, team, userId, this.state.config.timerSeconds);
-    await this.sendEmbed(embed);
+    await this.sendEmbed(embed, userId ? `<@${userId}>` : undefined);
 
     if (this.state.config.timerSeconds && userId) {
       this.startTimer();

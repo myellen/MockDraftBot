@@ -2,6 +2,7 @@ import {
   SlashCommandBuilder,
   ChatInputCommandInteraction,
   AutocompleteInteraction,
+  EmbedBuilder,
 } from 'discord.js';
 import { DraftManager } from '../draft/DraftManager';
 import { TEAMS } from '../data/teams';
@@ -289,6 +290,15 @@ export async function execute(
       `**${receiverTeamName}** send: ${formatSide(requested, requestedPlayers, requestedFuture)}\n\n` +
       `${toUser} — use \`/trade accept ${trade.id}\` to accept, or \`/trade decline ${trade.id}\` to decline.`
     );
+    await interaction.followUp({
+      content: `<@${toUser.id}>`,
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x5865F2)
+          .setTitle('📞 Incoming Trade Offer!')
+          .setDescription(`<@${toUser.id}> has received a trade proposal. Check \`/trade list\` for details.`)
+      ]
+    });
     return;
   }
 

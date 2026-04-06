@@ -95,6 +95,13 @@ export async function execute(
           '> `/draft remove-comanager user:@user` — remove a co-manager',
         inline: false,
       },
+      {
+        name: '🔟 Draft Recap — `/recap`',
+        value:
+          'Get the link to the live draft recap spreadsheet.\n' +
+          '> `/recap`',
+        inline: false,
+      },
     );
 
   const trading = new EmbedBuilder()
