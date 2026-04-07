@@ -8,12 +8,15 @@ export interface Prospect {
 export interface PlayerSalary {
   capHit: number;      // Total cap hit in thousands (e.g. 20000 = $20M)
   deadMoney: number;   // Dead money if traded (prorated bonus remaining), in thousands
+  baseSalary: number;  // Transferable cap in thousands (capHit minus prorated bonuses); the cap charge the receiving team takes on in a trade
 }
 
 export interface TeamCapInfo {
-  capUsed: number;     // Total cap charges in thousands
-  capSpace: number;    // Remaining cap room in thousands
-  deadMoney: number;   // Dead money from trades in thousands
+  capUsed: number;           // Total cap charges (top-51 + dead money) in thousands
+  capSpace: number;          // Remaining cap room in thousands
+  deadMoney: number;         // Dead money from trades in thousands
+  projectedRookieCap: number; // Projected cap from undrafted picks this team owns, in thousands
+  effectiveCapSpace: number; // Cap space after projecting all owned rookie slots, in thousands
 }
 
 export interface Team {

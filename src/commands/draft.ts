@@ -378,7 +378,7 @@ export async function execute(
 
     } else if (sub === 'undo-trade') {
       const tradeId = interaction.options.getString('id', true).toUpperCase();
-      const result = await manager.adminUndoTrade(tradeId);
+      const result = await manager.trades.adminUndoTrade(tradeId);
       if (!result.success) {
         await interaction.reply({ content: `❌ ${result.error}`, ephemeral: true });
         return;
@@ -475,7 +475,7 @@ export async function autocomplete(
   }
 
   if (sub === 'undo-trade') {
-    const history = manager.getTradeHistory();
+    const history = manager.trades.getTradeHistory();
     const choices = history
       .filter(t => t.id.includes(q))
       .slice(0, 25)

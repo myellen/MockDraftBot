@@ -82,10 +82,13 @@ export async function execute(
   const hasSalaryData = Object.keys(SALARIES).length > 0;
   let capText = '';
   if (hasSalaryData) {
-    const capInfo = manager.getTeamCapInfo(teamAbbr);
+    const capInfo = manager.trades.getTeamCapInfo(teamAbbr);
     capText = `**Cap Used:** $${formatCapAmount(capInfo.capUsed)}  ·  **Cap Space:** $${formatCapAmount(capInfo.capSpace)}`;
     if (capInfo.deadMoney > 0) {
       capText += `  ·  **Dead Money:** $${formatCapAmount(capInfo.deadMoney)}`;
+    }
+    if (capInfo.projectedRookieCap > 0) {
+      capText += `\n**Effective Cap Space:** $${formatCapAmount(capInfo.effectiveCapSpace)} *(after $${formatCapAmount(capInfo.projectedRookieCap)} in projected rookie slots)*`;
     }
   }
 

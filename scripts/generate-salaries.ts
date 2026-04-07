@@ -17,6 +17,7 @@ import * as path from 'path';
 interface PlayerSalaryData {
   capHit: number;      // in thousands
   deadMoney: number;   // in thousands
+  baseSalary: number;  // in thousands — transferable cap (capHit minus prorated bonuses)
 }
 
 // Team abbreviation → Spotrac URL slug
@@ -50,7 +51,33 @@ function parseDollar(str: string): number {
 }
 
 /**
- * Attempt to scrape Spotrac for a team's salary data.
+ * Extract player name from a table row's HTML.
+ */
+function extractPlayerName(row: string): string | null {
+  const m = row.match(/class="[^"]*team-name[^"]*"[^>]*>([^<]+)<\/a>/i)
+    ?? row.match(/<a[^>]+href="[^"]*\/nfl\/[^"]*\/[^"]*"[^>]*>([^<]+)<\/a>/i);
+  const name = m?.[1]?.trim();
+  return name && name.length >= 3 ? name : null;
+}
+
+/**
+ * Parse a single table cell's dollar value (handles $X,XXX and ($X,XXX) and "-").
+ */
+function parseCellDollar(cellHtml: string): number {
+  const text = cellHtml.replace(/<[^>]*>/g, '').trim();
+  if (text === '-' || text === '') return 0;
+  return parseDollar(text.replace(/[()]/g, ''));
+}
+
+/**
+ * Attempt to scrape Spotrac cap table for a team's salary data.
+ * Uses the cap table page which has full component breakdown per column:
+ *   Player | Pos | Age | Cap Hit | Cap Hit Pct | Dead Cap | Base P5 Salary |
+ *   Signing Bonus | Per Game | Roster Bonus | Option Bonus | Workout Bonus |
+ *   Restructure | Incentives
+ *
+ * baseSalary is scraped directly from the "Base P5 Salary" column and cross-checked
+ * against capHit - signingBonus - restructure.
  */
 async function fetchSpotrac(slug: string, abbr: string): Promise<Record<string, PlayerSalaryData> | null> {
   const url = `https://www.spotrac.com/nfl/${slug}/cap/_/year/2026`;
@@ -64,40 +91,67 @@ async function fetchSpotrac(slug: string, abbr: string): Promise<Record<string, 
     if (!res.ok) return null;
     const html = await res.text();
 
-    // Spotrac tables have rows with player data including cap hit and dead money columns.
-    // We look for table rows containing player salary data.
     const players: Record<string, PlayerSalaryData> = {};
 
-    // Match player rows: name, then look for cap hit and dead money cells
-    // Spotrac format: <a class="team-name" href="...">Player Name</a> ... cap hit ... dead money
     const rowRegex = /<tr[^>]*>[\s\S]*?<\/tr>/gi;
     const rows = html.match(rowRegex) ?? [];
 
     for (const row of rows) {
-      // Look for player name link
-      const nameMatch = row.match(/class="[^"]*team-name[^"]*"[^>]*>([^<]+)<\/a>/i)
-        ?? row.match(/<a[^>]+href="[^"]*\/nfl\/[^"]*\/[^"]*"[^>]*>([^<]+)<\/a>/i);
-      if (!nameMatch) continue;
+      const name = extractPlayerName(row);
+      if (!name) continue;
 
-      const name = nameMatch[1].trim();
-      if (!name || name.length < 3) continue;
+      // Extract individual <td> cells to parse by column position
+      const cellRegex = /<td[^>]*>[\s\S]*?<\/td>/gi;
+      const cells = row.match(cellRegex) ?? [];
 
-      // Extract all dollar amounts from the row
-      const dollarMatches = row.match(/\$[\d,]+/g);
-      if (!dollarMatches || dollarMatches.length < 2) continue;
+      const isDeadRow = /VOIDED|TRADED|RELEASED/i.test(row);
+      const key = name.toLowerCase();
 
-      // Typically the last two significant dollar amounts are cap hit and dead money
-      // Spotrac order varies, but cap hit is usually the larger total column
-      const amounts = dollarMatches.map(parseDollar).filter(n => n > 0);
-      if (amounts.length < 1) continue;
+      if (isDeadRow) {
+        // Dead money row: first dollar amount is the dead cap charge.
+        const dollarMatches = row.match(/\$[\d,]+/g);
+        if (!dollarMatches) continue;
+        const deadCharge = dollarMatches.map(parseDollar).find(n => n > 0) ?? 0;
+        if (deadCharge <= 0) continue;
+        const deadKey = players[key] ? `${key}__dead` : key;
+        players[deadKey] = { capHit: deadCharge, deadMoney: deadCharge, baseSalary: 0 };
+      } else if (cells.length >= 14) {
+        // Full cap table row with component columns:
+        //  [0]=Player [1]=Pos [2]=Age [3]=CapHit [4]=CapPct [5]=DeadCap
+        //  [6]=Base [7]=Signing [8]=PerGame [9]=Roster [10]=Option
+        //  [11]=Workout [12]=Restructure [13]=Incentives
+        const capHit = parseCellDollar(cells[3]);
+        const deadMoney = parseCellDollar(cells[5]);
+        const baseSalary = parseCellDollar(cells[6]);
+        const signingBonus = parseCellDollar(cells[7]);
+        const restructure = parseCellDollar(cells[12]);
 
-      // Use the largest value as cap hit, estimate dead money as a portion
-      const capHit = Math.max(...amounts);
-      // Dead money is often in a specific column; if we can't parse it precisely,
-      // estimate it as roughly 40% of cap hit (average across NFL)
-      const deadMoney = amounts.length >= 3 ? amounts[amounts.length - 1] : Math.round(capHit * 0.4);
+        if (capHit <= 0) continue;
 
-      players[name.toLowerCase()] = { capHit, deadMoney: Math.min(deadMoney, capHit) };
+        // The transferable cap in a trade = capHit minus prorated bonuses (signing + restructure).
+        // This equals base salary + perGame + roster + option + workout + incentives.
+        // We use capHit - signing - restructure because it's the most reliable formula
+        // and cross-check against the scraped base salary column.
+        const transferable = capHit - signingBonus - restructure;
+
+        if (baseSalary > 0 && Math.abs(transferable - baseSalary) > 1 && transferable > baseSalary) {
+          // Expected: transferable >= baseSalary (transferable includes perGame, option, etc.)
+        } else if (baseSalary > transferable + 1) {
+          process.stderr.write(`    [warn] ${name}: base(${baseSalary}) > transferable(${transferable})\n`);
+        }
+
+        players[key] = { capHit, deadMoney, baseSalary: transferable };
+      } else {
+        // Fewer columns — fall back to dollar-based parsing
+        const dollarMatches = row.match(/\$[\d,]+/g);
+        if (!dollarMatches || dollarMatches.length < 1) continue;
+        const amounts = dollarMatches.map(parseDollar).filter(n => n > 0);
+        if (amounts.length < 1) continue;
+        const capHit = amounts[0];
+        if (!players[key]) {
+          players[key] = { capHit, deadMoney: 0, baseSalary: capHit };
+        }
+      }
     }
 
     return Object.keys(players).length > 10 ? players : null;
@@ -133,16 +187,18 @@ async function fetchOTC(slug: string, abbr: string): Promise<Record<string, Play
       const name = nameMatch[1].trim();
       if (!name || name.length < 3) continue;
 
-      const dollarMatches = row.match(/\$[\d,]+/g);
+      const dollarMatches = row.match(/\(?[\$][\d,]+\)?/g);
       if (!dollarMatches || dollarMatches.length < 1) continue;
 
       const amounts = dollarMatches.map(parseDollar).filter(n => n > 0);
       if (amounts.length < 1) continue;
 
-      const capHit = Math.max(...amounts);
-      const deadMoney = amounts.length >= 2 ? Math.min(amounts[amounts.length - 1], capHit) : Math.round(capHit * 0.4);
+      // Cap Hit is the first dollar amount in the row
+      const capHit = amounts[0];
+      const deadMoney = amounts.length >= 2 ? amounts[1] : Math.round(capHit * 0.4);
 
-      players[name.toLowerCase()] = { capHit, deadMoney: Math.min(deadMoney, capHit) };
+      // OTC doesn't have component breakdown; approximate baseSalary as capHit
+      players[name.toLowerCase()] = { capHit, deadMoney, baseSalary: capHit };
     }
 
     return Object.keys(players).length > 10 ? players : null;
@@ -196,11 +252,36 @@ function generateEstimates(rostersPath: string): Record<string, Record<string, P
       const deadRatio = POS_DEAD_RATIO[player.pos] ?? 0.35;
       const deadMoney = Math.round(capHit * deadRatio);
 
-      result[abbr][player.name.toLowerCase()] = { capHit, deadMoney };
+      result[abbr][player.name.toLowerCase()] = { capHit, deadMoney, baseSalary: capHit };
     }
   }
 
   return result;
+}
+
+/**
+ * Load trade machine data (ground truth for baseSalary AND deadMoney).
+ * Full data: team → player → { incomingCap, deadCap } in raw dollars.
+ * Falls back to legacy incoming-caps-only file if full data not found.
+ */
+function loadTradeMachineData(): { full: Record<string, Record<string, { incomingCap: number; deadCap: number }>>; legacy: false }
+  | { full: null; legacy: Record<string, Record<string, number>> }
+  | null {
+  // Try full data first (has both incomingCap and deadCap)
+  const fullPath = path.join(__dirname, 'trade-machine-full-data.json');
+  try {
+    const raw = fs.readFileSync(fullPath, 'utf8');
+    return { full: JSON.parse(raw), legacy: false };
+  } catch { /* fall through */ }
+
+  // Fall back to legacy incoming-caps-only file
+  const legacyPath = path.join(__dirname, 'trade-machine-incoming-caps.json');
+  try {
+    const raw = fs.readFileSync(legacyPath, 'utf8');
+    return { full: null, legacy: JSON.parse(raw) };
+  } catch {
+    return null;
+  }
 }
 
 async function main() {
@@ -238,6 +319,61 @@ async function main() {
     await new Promise(r => setTimeout(r, 300));
   }
 
+  // ─── Override baseSalary + deadMoney with trade machine ground truth ────────
+  const tmData = loadTradeMachineData();
+  if (tmData) {
+    let overrideCount = 0;
+    let baseDiffCount = 0;
+    let deadDiffCount = 0;
+
+    if (tmData.full) {
+      // Full data: override both baseSalary and deadMoney
+      for (const [abbr, teamSalaries] of Object.entries(allSalaries)) {
+        const tmTeam = tmData.full[abbr];
+        if (!tmTeam) continue;
+        const tmLookup: Record<string, { incomingCap: number; deadCap: number }> = {};
+        for (const [name, val] of Object.entries(tmTeam)) {
+          tmLookup[name.toLowerCase()] = val;
+        }
+        for (const [key, salary] of Object.entries(teamSalaries)) {
+          const tm = tmLookup[key];
+          if (tm === undefined) continue;
+          const newBase = Math.round(tm.incomingCap / 1000);
+          const newDead = Math.round(tm.deadCap / 1000);
+          if (Math.abs(salary.baseSalary - newBase) > 1) baseDiffCount++;
+          if (Math.abs(salary.deadMoney - newDead) > 1) deadDiffCount++;
+          salary.baseSalary = newBase;
+          salary.deadMoney = newDead;
+          overrideCount++;
+        }
+      }
+      console.error(`\nTrade machine overrides (full): ${overrideCount} players matched`);
+      console.error(`  baseSalary changes: ${baseDiffCount}, deadMoney changes: ${deadDiffCount}`);
+    } else if (tmData.legacy) {
+      // Legacy: override baseSalary only
+      for (const [abbr, teamSalaries] of Object.entries(allSalaries)) {
+        const tmTeam = tmData.legacy[abbr];
+        if (!tmTeam) continue;
+        const tmLookup: Record<string, number> = {};
+        for (const [name, val] of Object.entries(tmTeam)) {
+          tmLookup[name.toLowerCase()] = Math.round(val / 1000);
+        }
+        for (const [key, salary] of Object.entries(teamSalaries)) {
+          const tmVal = tmLookup[key];
+          if (tmVal !== undefined) {
+            if (Math.abs(salary.baseSalary - tmVal) > 1) baseDiffCount++;
+            salary.baseSalary = tmVal;
+            overrideCount++;
+          }
+        }
+      }
+      console.error(`\nTrade machine overrides (legacy, baseSalary only): ${overrideCount} matched, ${baseDiffCount} changed`);
+    }
+  } else {
+    console.error('\nNo trade machine data found (scripts/trade-machine-full-data.json or trade-machine-incoming-caps.json)');
+    console.error('baseSalary values use formula: capHit - signingBonus - restructure');
+  }
+
   // If fewer than half of teams got real data, fall back to estimates for missing teams
   const rostersPath = path.join(__dirname, '..', 'src', 'data', 'rosters');
   if (apiSuccess < teams.length) {
@@ -260,7 +396,10 @@ async function main() {
   lines.push("import { PlayerSalary } from '../draft/types';");
   lines.push('');
   lines.push('// 2026 NFL salary cap (estimated) in thousands of dollars');
-  lines.push('export const SALARY_CAP = 275000;');
+  lines.push('export const SALARY_CAP = 301200;');
+  lines.push('');
+  lines.push('// Rookie minimum salary in thousands (used for Rule of 51 / pick cap impact)');
+  lines.push('export const ROOKIE_MINIMUM = 885;');
   lines.push('');
   lines.push('// Rookie cap hits by overall pick number (year-1 cap charge in thousands)');
   lines.push('// Based on projected 2026 rookie wage scale');
@@ -300,7 +439,7 @@ async function main() {
     lines.push(`  ${/^\d/.test(abbr) ? `"${abbr}"` : abbr}: {`);
     for (const [name, salary] of entries) {
       const escapedName = name.replace(/"/g, '\\"');
-      lines.push(`    "${escapedName}": { capHit: ${salary.capHit}, deadMoney: ${salary.deadMoney} },`);
+      lines.push(`    "${escapedName}": { capHit: ${salary.capHit}, deadMoney: ${salary.deadMoney}, baseSalary: ${salary.baseSalary} },`);
     }
     lines.push('  },');
   }

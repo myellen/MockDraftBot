@@ -1,0 +1,388 @@
+{
+  "source": "Spotrac NFL Trade Machine (https://www.spotrac.com/nfl/trade-machine)",
+  "generatedDate": "2026-04-07",
+  "season": 2026,
+  "teams": ["BUF", "DAL"],
+  "notes": [
+    "All dollar amounts are in raw dollars (not thousands).",
+    "capHit and deadCap values come from the trade machine page, which shows single-year (2026) figures.",
+    "The overview page shows TOTAL remaining dead cap across all years, which is different.",
+    "incomingCap = the cap charge the receiving team takes on (base salary portion, NOT capHit - deadCap).",
+    "retainedDead = dead money the sending team retains.",
+    "netCap = the net cap space change for the team (negative = loses cap space).",
+    "The 'incoming cap' for the receiving team is the player's base salary, not derivable from just capHit and deadCap.",
+    "Draft picks have zero cap impact — no incomingCap, retainedDead, or netCap change.",
+    "Trades 1-6 are player-only. Trades 7, 11 are picks-only. Trades 8-10 are mixed (players + picks)."
+  ],
+  "tradeResults": [
+    {
+      "id": 1,
+      "description": "Ed Oliver (BUF) for CeeDee Lamb (DAL) — both have dead > cap",
+      "team1": "BUF",
+      "team2": "DAL",
+      "team1Sends": [
+        { "name": "Ed Oliver", "pos": "DL", "capHit": 13660000, "deadCap": 34410000 }
+      ],
+      "team2Sends": [
+        { "name": "CeeDee Lamb", "pos": "WR", "capHit": 19654314, "deadCap": 65373140 }
+      ],
+      "results": {
+        "team1_BUF": {
+          "incomingCap": 2573529,
+          "retainedDead": 34410000,
+          "afterTrade": 36983529,
+          "originalCap": 13660000,
+          "netCap": -23323529
+        },
+        "team2_DAL": {
+          "incomingCap": 3125000,
+          "retainedDead": 65373140,
+          "afterTrade": 68498140,
+          "originalCap": 19654314,
+          "netCap": -48843826
+        }
+      }
+    },
+    {
+      "id": 2,
+      "description": "Josh Palmer (BUF, dead < cap) for Quinnen Williams (DAL, dead = 0)",
+      "team1": "BUF",
+      "team2": "DAL",
+      "team1Sends": [
+        { "name": "Josh Palmer", "pos": "WR", "capHit": 11750000, "deadCap": 6400000 }
+      ],
+      "team2Sends": [
+        { "name": "Quinnen Williams", "pos": "DL", "capHit": 21632353, "deadCap": 0 }
+      ],
+      "results": {
+        "team1_BUF": {
+          "incomingCap": 21632353,
+          "retainedDead": 6400000,
+          "afterTrade": 28032353,
+          "originalCap": 11750000,
+          "netCap": -16282353
+        },
+        "team2_DAL": {
+          "incomingCap": 10150000,
+          "retainedDead": 0,
+          "afterTrade": 10150000,
+          "originalCap": 21632353,
+          "netCap": 11482353
+        }
+      }
+    },
+    {
+      "id": 3,
+      "description": "Khalil Shakir (BUF, dead > cap) for George Pickens (DAL, dead = 0)",
+      "team1": "BUF",
+      "team2": "DAL",
+      "team1Sends": [
+        { "name": "Khalil Shakir", "pos": "WR", "capHit": 6792000, "deadCap": 14700000 }
+      ],
+      "team2Sends": [
+        { "name": "George Pickens", "pos": "WR", "capHit": 27298000, "deadCap": 0 }
+      ],
+      "results": {
+        "team1_BUF": {
+          "incomingCap": 27298000,
+          "retainedDead": 14700000,
+          "afterTrade": 41998000,
+          "originalCap": 6792000,
+          "netCap": -35206000
+        },
+        "team2_DAL": {
+          "incomingCap": 5392000,
+          "retainedDead": 0,
+          "afterTrade": 5392000,
+          "originalCap": 27298000,
+          "netCap": 21906000
+        }
+      }
+    },
+    {
+      "id": 4,
+      "description": "Dawson Knox (BUF, dead > cap) to DAL — one-way trade",
+      "team1": "BUF",
+      "team2": "DAL",
+      "team1Sends": [
+        { "name": "Dawson Knox", "pos": "TE", "capHit": 8551333, "deadCap": 13654000 }
+      ],
+      "team2Sends": [],
+      "results": {
+        "team1_BUF": {
+          "incomingCap": 0,
+          "retainedDead": 13654000,
+          "afterTrade": 13654000,
+          "originalCap": 8551333,
+          "netCap": -5102667
+        },
+        "team2_DAL": {
+          "incomingCap": 1400000,
+          "retainedDead": 0,
+          "afterTrade": 1400000,
+          "originalCap": 0,
+          "netCap": -1400000
+        }
+      }
+    },
+    {
+      "id": 5,
+      "description": "O'Cyrus Torrence (BUF, dead << cap, rookie deal) for Tyler Booker (DAL, dead > cap)",
+      "team1": "BUF",
+      "team2": "DAL",
+      "team1Sends": [
+        { "name": "O'Cyrus Torrence", "pos": "G", "capHit": 4305087, "deadCap": 381087 }
+      ],
+      "team2Sends": [
+        { "name": "Tyler Booker", "pos": "G", "capHit": 5077894, "deadCap": 9638175 }
+      ],
+      "results": {
+        "team1_BUF": {
+          "incomingCap": 1865169,
+          "retainedDead": 381087,
+          "afterTrade": 2246256,
+          "originalCap": 4305087,
+          "netCap": 2058831
+        },
+        "team2_DAL": {
+          "incomingCap": 3924000,
+          "retainedDead": 9638175,
+          "afterTrade": 13562175,
+          "originalCap": 5077894,
+          "netCap": -8484281
+        }
+      }
+    },
+    {
+      "id": 6,
+      "description": "Multi-player: James Cook + Terrel Bernard (BUF) for Jake Ferguson + Rashan Gary (DAL)",
+      "team1": "BUF",
+      "team2": "DAL",
+      "team1Sends": [
+        { "name": "James Cook", "pos": "RB", "capHit": 5880000, "deadCap": 14600000 },
+        { "name": "Terrel Bernard", "pos": "LB", "capHit": 5352000, "deadCap": 11550000 }
+      ],
+      "team2Sends": [
+        { "name": "Jake Ferguson", "pos": "TE", "capHit": 10400000, "deadCap": 9600000 },
+        { "name": "Rashan Gary", "pos": "ED", "capHit": 5440000, "deadCap": 13200000 }
+      ],
+      "results": {
+        "team1_BUF": {
+          "incomingCap": 10800000,
+          "retainedDead": 26150000,
+          "afterTrade": 36950000,
+          "originalCap": 11232000,
+          "netCap": -25718000
+        },
+        "team2_DAL": {
+          "incomingCap": 8232000,
+          "retainedDead": 22800000,
+          "afterTrade": 31032000,
+          "originalCap": 15840000,
+          "netCap": -15192000
+        }
+      }
+    },
+    {
+      "id": 7,
+      "description": "Picks only: BUF R3 + R5 for DAL R1 — no cap impact",
+      "team1": "BUF",
+      "team2": "DAL",
+      "team1Sends": [],
+      "team2Sends": [],
+      "team1SendsPicks": ["2026 R3"],
+      "team2SendsPicks": ["2026 R1"],
+      "team1ReceivesPicks": ["2026 R1 (DAL)"],
+      "team2ReceivesPicks": ["2026 R3 (BUF)", "2026 R5 (BUF)"],
+      "results": {
+        "team1_BUF": {
+          "incomingCap": 0,
+          "retainedDead": 0,
+          "afterTrade": 0,
+          "originalCap": 0,
+          "netCap": 0
+        },
+        "team2_DAL": {
+          "incomingCap": 0,
+          "retainedDead": 0,
+          "afterTrade": 0,
+          "originalCap": 0,
+          "netCap": 0
+        }
+      }
+    },
+    {
+      "id": 8,
+      "description": "Mixed: Josh Palmer + BUF R4 for George Pickens + DAL R5 — players + picks both sides",
+      "team1": "BUF",
+      "team2": "DAL",
+      "team1Sends": [
+        { "name": "Josh Palmer", "pos": "WR", "capHit": 11750000, "deadCap": 6400000 }
+      ],
+      "team2Sends": [
+        { "name": "George Pickens", "pos": "WR", "capHit": 27298000, "deadCap": 0 }
+      ],
+      "team1SendsPicks": ["2026 R4"],
+      "team2SendsPicks": ["2026 R5"],
+      "results": {
+        "team1_BUF": {
+          "incomingCap": 27298000,
+          "retainedDead": 6400000,
+          "afterTrade": 33698000,
+          "originalCap": 11750000,
+          "netCap": -21948000
+        },
+        "team2_DAL": {
+          "incomingCap": 10150000,
+          "retainedDead": 0,
+          "afterTrade": 10150000,
+          "originalCap": 27298000,
+          "netCap": 17148000
+        }
+      }
+    },
+    {
+      "id": 9,
+      "description": "Mixed: Khalil Shakir + BUF R6 for Jake Ferguson — player + pick for player",
+      "team1": "BUF",
+      "team2": "DAL",
+      "team1Sends": [
+        { "name": "Khalil Shakir", "pos": "WR", "capHit": 6792000, "deadCap": 14700000 }
+      ],
+      "team2Sends": [
+        { "name": "Jake Ferguson", "pos": "TE", "capHit": 10400000, "deadCap": 9600000 }
+      ],
+      "team1SendsPicks": ["2026 R6"],
+      "team2SendsPicks": [],
+      "results": {
+        "team1_BUF": {
+          "incomingCap": 8000000,
+          "retainedDead": 14700000,
+          "afterTrade": 22700000,
+          "originalCap": 6792000,
+          "netCap": -15908000
+        },
+        "team2_DAL": {
+          "incomingCap": 5392000,
+          "retainedDead": 9600000,
+          "afterTrade": 14992000,
+          "originalCap": 10400000,
+          "netCap": -4592000
+        }
+      }
+    },
+    {
+      "id": 10,
+      "description": "Mixed multi-asset: James Cook + BUF R5 for Kavontae Turpin + DAL R3 + DAL R4",
+      "team1": "BUF",
+      "team2": "DAL",
+      "team1Sends": [
+        { "name": "James Cook", "pos": "RB", "capHit": 5880000, "deadCap": 14600000 }
+      ],
+      "team2Sends": [
+        { "name": "Kavontae Turpin", "pos": "WR", "capHit": 4641176, "deadCap": 2400000 }
+      ],
+      "team1SendsPicks": ["2026 R5"],
+      "team2SendsPicks": ["2026 R3", "2026 R4"],
+      "results": {
+        "team1_BUF": {
+          "incomingCap": 3441176,
+          "retainedDead": 14600000,
+          "afterTrade": 18041176,
+          "originalCap": 5880000,
+          "netCap": -12161176
+        },
+        "team2_DAL": {
+          "incomingCap": 4080000,
+          "retainedDead": 2400000,
+          "afterTrade": 6480000,
+          "originalCap": 4641176,
+          "netCap": -1838824
+        }
+      }
+    },
+    {
+      "id": 11,
+      "description": "Picks only: BUF R1 + R7 for DAL R1 + R5 — pick swap, no cap impact",
+      "team1": "BUF",
+      "team2": "DAL",
+      "team1Sends": [],
+      "team2Sends": [],
+      "team1SendsPicks": ["2026 R1", "2026 R7"],
+      "team2SendsPicks": ["2026 R1", "2026 R5"],
+      "results": {
+        "team1_BUF": {
+          "incomingCap": 0,
+          "retainedDead": 0,
+          "afterTrade": 0,
+          "originalCap": 0,
+          "netCap": 0
+        },
+        "team2_DAL": {
+          "incomingCap": 0,
+          "retainedDead": 0,
+          "afterTrade": 0,
+          "originalCap": 0,
+          "netCap": 0
+        }
+      }
+    }
+  ],
+  "tradeMachineSalaryData": {
+    "description": "Player salary data as shown on the trade machine page (correct single-year 2026 dead cap). Top 25 players per team by cap hit.",
+    "BUF": [
+      { "name": "Josh Allen", "pos": "QB", "capHit": 44228000, "deadCap": 99669000 },
+      { "name": "Dion Dawkins", "pos": "LT", "capHit": 24837833, "deadCap": 22446833 },
+      { "name": "Ed Oliver", "pos": "DL", "capHit": 13660000, "deadCap": 34410000 },
+      { "name": "Greg Rousseau", "pos": "ED", "capHit": 11790000, "deadCap": 28000000 },
+      { "name": "Josh Palmer", "pos": "WR", "capHit": 11750000, "deadCap": 6400000 },
+      { "name": "Spencer Brown", "pos": "RT", "capHit": 8970000, "deadCap": 29665000 },
+      { "name": "Dawson Knox", "pos": "TE", "capHit": 8551333, "deadCap": 13654000 },
+      { "name": "Christian Benford", "pos": "CB", "capHit": 7396000, "deadCap": 18000000 },
+      { "name": "Michael Hoecht", "pos": "ED", "capHit": 7019647, "deadCap": 3278588 },
+      { "name": "Khalil Shakir", "pos": "WR", "capHit": 6792000, "deadCap": 14700000 },
+      { "name": "D.J. Moore", "pos": "WR", "capHit": 6752000, "deadCap": 22185000 },
+      { "name": "Bradley Chubb", "pos": "LB", "capHit": 6500000, "deadCap": 12000000 },
+      { "name": "James Cook", "pos": "RB", "capHit": 5880000, "deadCap": 14600000 },
+      { "name": "Terrel Bernard", "pos": "LB", "capHit": 5352000, "deadCap": 11550000 },
+      { "name": "Connor McGovern", "pos": "C", "capHit": 5250000, "deadCap": 13750000 },
+      { "name": "O'Cyrus Torrence", "pos": "G", "capHit": 4305087, "deadCap": 381087 },
+      { "name": "Dalton Kincaid", "pos": "TE", "capHit": 4272234, "deadCap": 1691277 },
+      { "name": "Dorian Williams", "pos": "LB", "capHit": 3902692, "deadCap": 258692 },
+      { "name": "Maxwell Hairston", "pos": "CB", "capHit": 3467723, "deadCap": 5802534 },
+      { "name": "Ty Johnson", "pos": "RB", "capHit": 3275000, "deadCap": 500000 },
+      { "name": "Dee Alford", "pos": "CB", "capHit": 3230000, "deadCap": 4500000 },
+      { "name": "Tyler Bass", "pos": "K", "capHit": 3050000, "deadCap": 2540000 },
+      { "name": "Keon Coleman", "pos": "WR", "capHit": 2747525, "deadCap": 2073366 },
+      { "name": "Alec Anderson", "pos": "G", "capHit": 2500000, "deadCap": 500000 },
+      { "name": "T.J. Sanders", "pos": "DL", "capHit": 2419411, "deadCap": 3286587 }
+    ],
+    "DAL": [
+      { "name": "Dak Prescott", "pos": "QB", "capHit": 43830813, "deadCap": 128189996 },
+      { "name": "George Pickens", "pos": "WR", "capHit": 27298000, "deadCap": 0 },
+      { "name": "Quinnen Williams", "pos": "DL", "capHit": 21632353, "deadCap": 0 },
+      { "name": "CeeDee Lamb", "pos": "WR", "capHit": 19654314, "deadCap": 65373140 },
+      { "name": "DaRon Bland", "pos": "CB", "capHit": 17019608, "deadCap": 17254904 },
+      { "name": "Kenny Clark", "pos": "DL", "capHit": 12700000, "deadCap": 11000000 },
+      { "name": "Jake Ferguson", "pos": "TE", "capHit": 10400000, "deadCap": 9600000 },
+      { "name": "Tyler Smith", "pos": "G", "capHit": 10302300, "deadCap": 34620000 },
+      { "name": "Terence Steele", "pos": "RT", "capHit": 8725000, "deadCap": 22875000 },
+      { "name": "Malik Hooker", "pos": "S", "capHit": 6558824, "deadCap": 2750000 },
+      { "name": "Brandon Aubrey", "pos": "K", "capHit": 5767000, "deadCap": 0 },
+      { "name": "T.J. Bass", "pos": "G", "capHit": 5767000, "deadCap": 0 },
+      { "name": "Rashan Gary", "pos": "ED", "capHit": 5440000, "deadCap": 13200000 },
+      { "name": "Tyler Booker", "pos": "G", "capHit": 5077894, "deadCap": 9638175 },
+      { "name": "Kavontae Turpin", "pos": "WR", "capHit": 4641176, "deadCap": 2400000 },
+      { "name": "Jalen Thompson", "pos": "S", "capHit": 4622345, "deadCap": 9700000 },
+      { "name": "Bryan Anger", "pos": "P", "capHit": 4100000, "deadCap": 1000000 },
+      { "name": "Decobie Durant", "pos": "CB", "capHit": 4000000, "deadCap": 1500000 },
+      { "name": "P.J. Locke", "pos": "S", "capHit": 3970576, "deadCap": 1500000 },
+      { "name": "Javonte Williams", "pos": "RB", "capHit": 3891176, "deadCap": 6000000 },
+      { "name": "Tyler Guyton", "pos": "LT", "capHit": 3587947, "deadCap": 3193930 },
+      { "name": "Hunter Luepke", "pos": "FB", "capHit": 3000000, "deadCap": 1000000 },
+      { "name": "Markquese Bell", "pos": "S", "capHit": 2833333, "deadCap": 1666668 },
+      { "name": "Sam Howell", "pos": "QB", "capHit": 2500000, "deadCap": 500000 },
+      { "name": "Sam Williams", "pos": "ED", "capHit": 2500000, "deadCap": 600000 }
+    ]
+  }
+}

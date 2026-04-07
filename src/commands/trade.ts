@@ -258,7 +258,7 @@ export async function execute(
     }
 
     await interaction.deferReply({ ephemeral: true });
-    const result = await manager.proposeTrade(
+    const result = await manager.trades.proposeTrade(
       interaction.user.id, toUser.id,
       offered, requested,
       offeredPlayers, requestedPlayers,
@@ -286,12 +286,18 @@ export async function execute(
     };
 
     let capImpactText = '';
-    if (Object.keys(SALARIES).length > 0 && (offeredPlayers.length > 0 || requestedPlayers.length > 0)) {
-      const impact = manager.calculateTradeCapImpact(trade);
+    if (Object.keys(SALARIES).length > 0 && (offeredPlayers.length > 0 || requestedPlayers.length > 0 || offered.length > 0 || requested.length > 0)) {
+      const impact = manager.trades.calculateTradeCapImpact(trade);
       const fmtDelta = (d: number) => d >= 0 ? `+$${formatCapAmount(d)}` : `-$${formatCapAmount(Math.abs(d))}`;
       capImpactText = `\n**Cap Impact:**\n` +
-        `${proposerTeamName}: ${fmtDelta(impact.proposerCapChange)} (new space: $${formatCapAmount(impact.proposerNewSpace)})\n` +
-        `${receiverTeamName}: ${fmtDelta(impact.receiverCapChange)} (new space: $${formatCapAmount(impact.receiverNewSpace)})`;
+        `${proposerTeamName}: ${fmtDelta(impact.proposerCapChange)} (eff. space: $${formatCapAmount(impact.proposerNewSpace)})\n` +
+        `${receiverTeamName}: ${fmtDelta(impact.receiverCapChange)} (eff. space: $${formatCapAmount(impact.receiverNewSpace)})`;
+
+      // Show cap warnings from validation
+      const capCheck = manager.trades.validateTradeCap(trade);
+      if (capCheck.warnings.length > 0) {
+        capImpactText += `\n⚠️ ${capCheck.warnings.join('\n⚠️ ')}`;
+      }
     }
 
     await interaction.editReply(
@@ -333,7 +339,7 @@ export async function execute(
   if (sub === 'accept') {
     const tradeId = interaction.options.getString('id', true).toUpperCase();
     await interaction.deferReply();
-    const result = await manager.acceptTrade(interaction.user.id, tradeId);
+    const result = await manager.trades.acceptTrade(interaction.user.id, tradeId);
 
     if (!result.success) {
       await interaction.editReply(`❌ ${result.error}`);
@@ -347,7 +353,7 @@ export async function execute(
 
   if (sub === 'decline') {
     const tradeId = interaction.options.getString('id', true).toUpperCase();
-    const result = await manager.declineTrade(interaction.user.id, tradeId);
+    const result = await manager.trades.declineTrade(interaction.user.id, tradeId);
 
     if (!result.success) {
       await interaction.reply({ content: `❌ ${result.error}`, ephemeral: true });
@@ -364,7 +370,7 @@ export async function execute(
       return;
     }
 
-    const trades = manager.getPendingTradesForUser(interaction.user.id);
+    const trades = manager.trades.getPendingTradesForUser(interaction.user.id);
     const futurePicks = manager.getFuturePicksForTeam(userTeam);
     const futurePickRights = manager.getFuturePickRightsForTeam(userTeam);
     const state = manager.getState();
@@ -488,7 +494,7 @@ export async function execute(
     }
 
     await interaction.deferReply({ ephemeral: true });
-    const result = await manager.adminForceTrade(
+    const result = await manager.trades.adminForceTrade(
       offerTeamAbbr, receiveTeamAbbr,
       offered, requested,
       offeredPlayers, requestedPlayers,
@@ -515,7 +521,7 @@ export async function autocomplete(
 
   // ── accept / decline ──────────────────────────────────────────────────────
   if (sub === 'accept' || sub === 'decline') {
-    const trades = manager.getPendingTradesForUser(interaction.user.id);
+    const trades = manager.trades.getPendingTradesForUser(interaction.user.id);
     const q = focusedValue.toUpperCase();
 
     if (sub === 'accept') {
