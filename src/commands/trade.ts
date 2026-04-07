@@ -4,8 +4,9 @@ import {
   AutocompleteInteraction,
   EmbedBuilder,
 } from 'discord.js';
-import { DraftManager } from '../draft/DraftManager';
+import { DraftManager, formatCapAmount } from '../draft/DraftManager';
 import { TEAMS } from '../data/teams';
+import { SALARIES } from '../data/salaries';
 import { buildPendingTradesEmbed, buildTradeExecutedEmbed } from '../utils/embeds';
 import { isAdmin } from '../utils/permissions';
 
@@ -284,10 +285,20 @@ export async function execute(
       return parts.join(' + ') || '_nothing_';
     };
 
+    let capImpactText = '';
+    if (Object.keys(SALARIES).length > 0 && (offeredPlayers.length > 0 || requestedPlayers.length > 0)) {
+      const impact = manager.calculateTradeCapImpact(trade);
+      const fmtDelta = (d: number) => d >= 0 ? `+$${formatCapAmount(d)}` : `-$${formatCapAmount(Math.abs(d))}`;
+      capImpactText = `\n**Cap Impact:**\n` +
+        `${proposerTeamName}: ${fmtDelta(impact.proposerCapChange)} (new space: $${formatCapAmount(impact.proposerNewSpace)})\n` +
+        `${receiverTeamName}: ${fmtDelta(impact.receiverCapChange)} (new space: $${formatCapAmount(impact.receiverNewSpace)})`;
+    }
+
     await interaction.editReply(
       `✅ Trade proposal **[${trade.id}]** sent!\n` +
       `**${proposerTeamName}** send: ${formatSide(offered, offeredPlayers, offeredFuture)}\n` +
-      `**${receiverTeamName}** send: ${formatSide(requested, requestedPlayers, requestedFuture)}\n\n` +
+      `**${receiverTeamName}** send: ${formatSide(requested, requestedPlayers, requestedFuture)}` +
+      capImpactText + `\n\n` +
       `${toUser} — use \`/trade accept ${trade.id}\` to accept, or \`/trade decline ${trade.id}\` to decline.`
     );
 

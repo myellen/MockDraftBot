@@ -5,6 +5,17 @@ export interface Prospect {
   school: string;
 }
 
+export interface PlayerSalary {
+  capHit: number;      // Total cap hit in thousands (e.g. 20000 = $20M)
+  deadMoney: number;   // Dead money if traded (prorated bonus remaining), in thousands
+}
+
+export interface TeamCapInfo {
+  capUsed: number;     // Total cap charges in thousands
+  capSpace: number;    // Remaining cap room in thousands
+  deadMoney: number;   // Dead money from trades in thousands
+}
+
 export interface Team {
   name: string;       // "Las Vegas Raiders"
   city: string;
@@ -46,6 +57,7 @@ export interface DraftConfig {
   rounds: number;   // how many rounds to simulate (default 7)
   allowPlayerTrades: boolean; // whether players can be included in trades (default true)
   tradeAnnouncement: TradeAnnouncement; // how trade proposals are announced (default 'intrigue')
+  enforceSalaryCap: boolean; // whether to validate trades against salary cap (default false)
 }
 
 export interface FuturePickRight {

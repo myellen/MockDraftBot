@@ -55,6 +55,11 @@ export const data = new SlashCommandBuilder()
         { name: 'Intrigue — public ping without details', value: 'intrigue' },
       )
     )
+    .addBooleanOption(opt => opt
+      .setName('enforce-salary-cap')
+      .setDescription('Validate trades against salary cap (default: false)')
+      .setRequired(false)
+    )
   )
   .addSubcommand(sub => sub
     .setName('register')
@@ -227,6 +232,7 @@ export async function execute(
     const rounds = interaction.options.getInteger('rounds') ?? 7;
     const allowPlayerTrades = interaction.options.getBoolean('allow-player-trades') ?? true;
     const tradeAnnouncement = (interaction.options.getString('trade-announcement') ?? 'intrigue') as TradeAnnouncement;
+    const enforceSalaryCap = interaction.options.getBoolean('enforce-salary-cap') ?? false;
 
     await manager.setup({
       channelId: channel.id,
@@ -235,6 +241,7 @@ export async function execute(
       rounds,
       allowPlayerTrades,
       tradeAnnouncement,
+      enforceSalaryCap,
     });
 
     const timerStr = timer ? `${timer}m per pick` : 'No timer';
@@ -250,6 +257,7 @@ export async function execute(
             { name: 'Rounds',    value: String(rounds),      inline: true },
             { name: 'Player Trades', value: allowPlayerTrades ? 'On' : 'Off', inline: true },
             { name: 'Trade Announcements', value: tradeAnnouncement.charAt(0).toUpperCase() + tradeAnnouncement.slice(1), inline: true },
+            { name: 'Salary Cap', value: enforceSalaryCap ? 'Enforced' : 'Off', inline: true },
           )
           .setDescription('Now have GMs register their teams with `/draft register`, then use `/draft start` when ready.')
       ]

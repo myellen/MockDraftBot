@@ -3,8 +3,9 @@ import {
   ChatInputCommandInteraction,
   EmbedBuilder,
 } from 'discord.js';
-import { DraftManager } from '../draft/DraftManager';
+import { DraftManager, formatCapAmount } from '../draft/DraftManager';
 import { TEAMS } from '../data/teams';
+import { SALARIES } from '../data/salaries';
 
 const POS_GROUPS: Array<{ label: string; positions: string[] }> = [
   { label: 'QB',    positions: ['QB'] },
@@ -77,6 +78,17 @@ export async function execute(
   }
   if (!futureText) futureText = '_None_';
 
+  // ── Salary Cap ─────────────────────────────────────────────────────────────
+  const hasSalaryData = Object.keys(SALARIES).length > 0;
+  let capText = '';
+  if (hasSalaryData) {
+    const capInfo = manager.getTeamCapInfo(teamAbbr);
+    capText = `**Cap Used:** $${formatCapAmount(capInfo.capUsed)}  ·  **Cap Space:** $${formatCapAmount(capInfo.capSpace)}`;
+    if (capInfo.deadMoney > 0) {
+      capText += `  ·  **Dead Money:** $${formatCapAmount(capInfo.deadMoney)}`;
+    }
+  }
+
   // ── Roster ────────────────────────────────────────────────────────────────
   const roster = manager.getFullRoster(teamAbbr);
 
@@ -88,6 +100,10 @@ export async function execute(
       { name: '📅 2026 Draft Picks', value: picksText, inline: false },
       { name: '🔮 Future Pick Rights', value: futureText.trim() || '_None_', inline: false },
     );
+
+  if (capText) {
+    embed.addFields({ name: '💰 Salary Cap', value: capText, inline: false });
+  }
 
   // Position group fields (inline — 3 per row on desktop)
   const allGroupedPos = new Set(POS_GROUPS.flatMap(g => g.positions));

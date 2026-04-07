@@ -3,13 +3,15 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import {
   DraftState, DraftStatus, DraftConfig, CompletedPick,
-  PickSlot, PickResult, RegisterResult, PendingTrade, FuturePickRight, BoardData
+  PickSlot, PickResult, RegisterResult, PendingTrade, FuturePickRight, BoardData,
+  PlayerSalary, TeamCapInfo
 } from './types';
 import { buildSchedule } from './scheduleBuilder';
 import { FUTURE_PICK_TRADES } from '../data/draftOrder';
 import { PROSPECTS_DEDUPED, PROSPECT_BY_RANK } from '../data/prospects';
 import { TEAMS } from '../data/teams';
 import { ROSTERS } from '../data/rosters';
+import { SALARIES, SALARY_CAP, getRookieCapHit } from '../data/salaries';
 import { buildPickEmbed, buildOnTheClockEmbed, buildDraftCompleteEmbed, buildTeamRosterEmbed, buildTradeExecutedEmbed } from '../utils/embeds';
 
 function statePath(guildId: string): string {
@@ -50,7 +52,7 @@ function buildFuturePickRights(): FuturePickRight[] {
 const DEFAULT_STATE: DraftState = {
   schemaVersion: 1,
   status: 'idle',
-  config: { channelId: null, timerSeconds: null, autoPick: true, rounds: 7, allowPlayerTrades: true, tradeAnnouncement: 'intrigue' },
+  config: { channelId: null, timerSeconds: null, autoPick: true, rounds: 7, allowPlayerTrades: true, tradeAnnouncement: 'intrigue', enforceSalaryCap: false },
   assignments: {},
   coManagers: {},
   schedule: [],
@@ -754,6 +756,188 @@ export class DraftManager {
     ];
   }
 
+  // ─── Salary Cap ─────────────────────────────────────────────────────────────
+
+  /**
+   * Look up the salary data for a player on a given team.
+   * Checks the team's salary table first, then searches all teams if traded.
+   */
+  getPlayerSalary(playerName: string, teamAbbr: string): PlayerSalary | null {
+    const key = playerName.toLowerCase();
+    // Check this team's salary data first
+    const teamSalaries = SALARIES[teamAbbr];
+    if (teamSalaries?.[key]) return teamSalaries[key];
+    // If the player was traded to this team, look up their original team's salary
+    for (const [origTeam, salaries] of Object.entries(SALARIES)) {
+      if (salaries[key]) return salaries[key];
+    }
+    return null;
+  }
+
+  /**
+   * Find the original team a player belongs to in the base SALARIES data.
+   */
+  private getPlayerOriginalSalaryTeam(playerName: string): string | null {
+    const key = playerName.toLowerCase();
+    for (const [abbr, salaries] of Object.entries(SALARIES)) {
+      if (salaries[key]) return abbr;
+    }
+    return null;
+  }
+
+  /**
+   * Compute a team's current salary cap situation, accounting for trades and draft picks.
+   */
+  getTeamCapInfo(teamAbbr: string): TeamCapInfo {
+    let capUsed = 0;
+    let deadMoney = 0;
+
+    const teamSalaries = SALARIES[teamAbbr] ?? {};
+    const baseRoster = ROSTERS[teamAbbr] ?? [];
+
+    // 1. Process original roster players
+    for (const player of baseRoster) {
+      const key = player.name.toLowerCase();
+      const salary = teamSalaries[key];
+      if (!salary) continue;
+
+      const tradedTo = this.state.playerOwnership[key];
+      if (tradedTo !== undefined && tradedTo !== teamAbbr) {
+        // Player was traded away — dead money stays on this team
+        deadMoney += salary.deadMoney;
+        capUsed += salary.deadMoney;
+      } else {
+        // Player still on team — full cap hit
+        capUsed += salary.capHit;
+      }
+    }
+
+    // 2. Add players traded IN from other teams
+    for (const [nameLower, ownerTeam] of Object.entries(this.state.playerOwnership)) {
+      if (ownerTeam !== teamAbbr) continue;
+      // Skip if this player was originally on this team (already counted above)
+      if (baseRoster.some(p => p.name.toLowerCase() === nameLower)) continue;
+
+      const origTeam = this.getPlayerOriginalSalaryTeam(nameLower);
+      if (!origTeam) continue;
+      const origSalary = SALARIES[origTeam]?.[nameLower];
+      if (!origSalary) continue;
+      // Receiving team takes on: capHit - deadMoney (the transferable portion)
+      capUsed += origSalary.capHit - origSalary.deadMoney;
+    }
+
+    // 3. Add rookie cap hits for drafted players on this team
+    for (const pick of this.state.picks) {
+      if (pick.team === teamAbbr) {
+        capUsed += getRookieCapHit(pick.overall);
+      }
+    }
+
+    return {
+      capUsed,
+      capSpace: SALARY_CAP - capUsed,
+      deadMoney,
+    };
+  }
+
+  /**
+   * Calculate the cap impact of a trade for both teams BEFORE execution.
+   * Returns the cap space change for each team (negative = less space).
+   */
+  calculateTradeCapImpact(trade: PendingTrade): {
+    proposerCapChange: number;
+    receiverCapChange: number;
+    proposerNewSpace: number;
+    receiverNewSpace: number;
+  } {
+    const proposerCap = this.getTeamCapInfo(trade.proposerTeam);
+    const receiverCap = this.getTeamCapInfo(trade.receiverTeam);
+
+    let proposerCapDelta = 0;
+    let receiverCapDelta = 0;
+
+    // Players proposer sends to receiver
+    for (const name of trade.offeredPlayers) {
+      const origTeam = this.getPlayerOriginalSalaryTeam(name.toLowerCase());
+      if (!origTeam) continue;
+      const salary = SALARIES[origTeam]?.[name.toLowerCase()];
+      if (!salary) continue;
+
+      // If the player is currently on the proposer's team:
+      // Was the player originally on proposer's team or traded in?
+      const wasOriginallyOnProposer = origTeam === trade.proposerTeam;
+
+      if (wasOriginallyOnProposer) {
+        // Proposer loses full cap hit, gains dead money
+        proposerCapDelta += salary.deadMoney - salary.capHit;
+        // Receiver takes on transferable portion
+        receiverCapDelta += salary.capHit - salary.deadMoney;
+      } else {
+        // Player was previously traded to proposer — their cap charge was already (capHit - deadMoney)
+        // Trading them again: proposer drops the transferable portion, receiver picks it up
+        const transferable = salary.capHit - salary.deadMoney;
+        proposerCapDelta -= transferable;
+        receiverCapDelta += transferable;
+      }
+    }
+
+    // Players receiver sends to proposer
+    for (const name of trade.requestedPlayers) {
+      const origTeam = this.getPlayerOriginalSalaryTeam(name.toLowerCase());
+      if (!origTeam) continue;
+      const salary = SALARIES[origTeam]?.[name.toLowerCase()];
+      if (!salary) continue;
+
+      const wasOriginallyOnReceiver = origTeam === trade.receiverTeam;
+
+      if (wasOriginallyOnReceiver) {
+        receiverCapDelta += salary.deadMoney - salary.capHit;
+        proposerCapDelta += salary.capHit - salary.deadMoney;
+      } else {
+        const transferable = salary.capHit - salary.deadMoney;
+        receiverCapDelta -= transferable;
+        proposerCapDelta += transferable;
+      }
+    }
+
+    return {
+      proposerCapChange: proposerCapDelta,
+      receiverCapChange: receiverCapDelta,
+      proposerNewSpace: proposerCap.capSpace + proposerCapDelta, // delta is negative when cap used increases
+      receiverNewSpace: receiverCap.capSpace + receiverCapDelta,
+    };
+  }
+
+  /**
+   * Validate that a trade would not put either team over the salary cap.
+   * Only enforced when enforceSalaryCap is enabled in config.
+   */
+  validateTradeCap(trade: PendingTrade): { valid: boolean; error?: string } {
+    if (!this.state.config.enforceSalaryCap) return { valid: true };
+    if (trade.offeredPlayers.length === 0 && trade.requestedPlayers.length === 0) {
+      return { valid: true }; // pick-only trades have no cap impact
+    }
+
+    const impact = this.calculateTradeCapImpact(trade);
+
+    if (impact.proposerNewSpace < 0) {
+      const over = Math.abs(impact.proposerNewSpace);
+      return {
+        valid: false,
+        error: `Trade would put the **${TEAMS[trade.proposerTeam]?.name ?? trade.proposerTeam}** $${formatCapAmount(over)} over the salary cap.`,
+      };
+    }
+    if (impact.receiverNewSpace < 0) {
+      const over = Math.abs(impact.receiverNewSpace);
+      return {
+        valid: false,
+        error: `Trade would put the **${TEAMS[trade.receiverTeam]?.name ?? trade.receiverTeam}** $${formatCapAmount(over)} over the salary cap.`,
+      };
+    }
+
+    return { valid: true };
+  }
+
   async rewind(round: number, roundPick: number): Promise<{ success: boolean; error?: string }> {
     if (this.state.status !== 'active' && this.state.status !== 'paused') {
       return { success: false, error: 'Draft must be active or paused to rewind.' };
@@ -892,6 +1076,10 @@ export class DraftManager {
       expiresAt: Date.now() + 24 * 60 * 60 * 1000,
     };
 
+    // Validate salary cap implications
+    const capCheck = this.validateTradeCap(trade);
+    if (!capCheck.valid) return { success: false, error: capCheck.error };
+
     this.state.pendingTrades.push(trade);
     await this.persist();
     return { success: true, trade };
@@ -921,6 +1109,10 @@ export class DraftManager {
         return { success: false, error: `Pick #${overall} is no longer available.` };
       }
     }
+
+    // Re-validate salary cap at acceptance time (cap situation may have changed)
+    const capCheck = this.validateTradeCap(trade);
+    if (!capCheck.valid) return { success: false, error: capCheck.error };
 
     // Execute: swap currentTeam on the pick slots
     for (const overall of trade.offeredOveralls) {
@@ -1114,6 +1306,10 @@ export class DraftManager {
       expiresAt: Date.now() + 24 * 60 * 60 * 1000,
     };
 
+    // Validate salary cap (even for admin — use /draft set-cap off to bypass)
+    const capCheck = this.validateTradeCap(trade);
+    if (!capCheck.valid) return { success: false, error: capCheck.error };
+
     // Execute immediately
     for (const overall of offeredOveralls) {
       const slot = this.state.schedule.find(s => s.overall === overall);
@@ -1201,4 +1397,13 @@ function delay(ms: number): Promise<void> {
 
 function generateTradeId(): string {
   return Math.random().toString(36).slice(2, 7).toUpperCase();
+}
+
+/** Format a cap amount in thousands to a readable string (e.g. 12500 → "12.5M"). */
+export function formatCapAmount(amountInThousands: number): string {
+  const millions = amountInThousands / 1000;
+  if (Math.abs(millions) >= 1) {
+    return `${millions.toFixed(1).replace(/\.0$/, '')}M`;
+  }
+  return `${amountInThousands}K`;
 }
