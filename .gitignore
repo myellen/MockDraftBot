@@ -2,4 +2,8 @@ node_modules/
 build/
 .env
 .env.backup.txt
-data/
+data/*
+!data/*.example.json
+src/data/prospects.ts
+src/data/rosters.ts
+src/data/draftOrder.ts

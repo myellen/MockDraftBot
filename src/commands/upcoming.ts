@@ -2,6 +2,7 @@ import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder } from '
 import { DraftManager } from '../draft/DraftManager';
 import { TEAMS } from '../data/teams';
 import { ordinal } from '../utils/ordinal';
+import { TEAM_EMOJI } from '../utils/teamEmoji';
 
 export const data = new SlashCommandBuilder()
   .setName('upcoming')
@@ -38,8 +39,9 @@ export async function execute(
     const gmId = state.assignments[slot.currentTeam];
     const gm = gmId ? `<@${gmId}>` : '_unassigned_';
     const traded = slot.isTraded ? ' *(traded)*' : '';
-    const arrow = i === 0 ? '➡️' : '⬜';
-    return `${arrow} **${ordinal(slot.overall)}** (R${slot.round}P${slot.roundPick}) — ${teamName} · ${gm}${traded}`;
+    const emoji = TEAM_EMOJI[slot.currentTeam] ?? '⬜';
+    const arrow = i === 0 ? '➡️ ' : '';
+    return `${arrow}${emoji} **${ordinal(slot.overall)}** (R${slot.round}P${slot.roundPick}) — ${teamName} · ${gm}${traded}`;
   });
 
   const embed = new EmbedBuilder()

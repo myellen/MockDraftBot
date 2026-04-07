@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "status": "idle",
+  "config": {
+    "channelId": null,
+    "timerSeconds": null,
+    "autoPick": true,
+    "rounds": 7,
+    "allowPlayerTrades": true,
+    "tradeAnnouncement": "intrigue"
+  },
+  "assignments": {
+    "LV": "123456789012345678",
+    "NYJ": "234567890123456789"
+  },
+  "coManagers": {
+    "LV": ["345678901234567890"]
+  },
+  "schedule": [
+    {
+      "overall": 1,
+      "round": 1,
+      "roundPick": 1,
+      "originalTeam": "LV",
+      "currentTeam": "LV",
+      "isTraded": false
+    },
+    {
+      "overall": 2,
+      "round": 1,
+      "roundPick": 2,
+      "originalTeam": "NYJ",
+      "currentTeam": "NYJ",
+      "isTraded": false
+    }
+  ],
+  "currentPickIndex": 0,
+  "picks": [
+    {
+      "overall": 1,
+      "round": 1,
+      "roundPick": 1,
+      "team": "LV",
+      "prospectRank": 1,
+      "prospectName": "Player Name",
+      "pos": "QB",
+      "school": "University",
+      "userId": "123456789012345678",
+      "autoPicked": false,
+      "pickedAt": 1775267607048
+    }
+  ],
+  "availableRanks": [2, 3, 4, 5],
+  "timerExpiresAt": null,
+  "pendingTrades": [
+    {
+      "id": "ABCDE",
+      "proposerUserId": "123456789012345678",
+      "proposerTeam": "LV",
+      "receiverUserId": "234567890123456789",
+      "receiverTeam": "NYJ",
+      "offeredOveralls": [33],
+      "requestedOveralls": [34],
+      "offeredPlayers": [],
+      "requestedPlayers": [],
+      "offeredFuturePicks": ["2027-R2-LV"],
+      "requestedFuturePicks": [],
+      "createdAt": 1775324078090,
+      "expiresAt": 1775410478090
+    }
+  ],
+  "tradeHistory": [
+    {
+      "id": "FGHIJ",
+      "proposerUserId": "234567890123456789",
+      "proposerTeam": "NYJ",
+      "receiverUserId": "123456789012345678",
+      "receiverTeam": "LV",
+      "offeredOveralls": [2],
+      "requestedOveralls": [1],
+      "offeredPlayers": [],
+      "requestedPlayers": [],
+      "offeredFuturePicks": [],
+      "requestedFuturePicks": [],
+      "createdAt": 1775324078090,
+      "expiresAt": 1775410478090
+    }
+  ],
+  "playerOwnership": {},
+  "futurePickRights": [
+    {
+      "id": "2027-R1-LV",
+      "year": 2027,
+      "round": 1,
+      "originalTeam": "LV",
+      "currentTeam": "LV"
+    },
+    {
+      "id": "2027-R1-NYJ",
+      "year": 2027,
+      "round": 1,
+      "originalTeam": "NYJ",
+      "currentTeam": "NYJ"
+    }
+  ]
+}
