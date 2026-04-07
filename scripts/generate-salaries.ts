@@ -64,9 +64,14 @@ function extractPlayerName(row: string): string | null {
  * Parse a single table cell's dollar value (handles $X,XXX and ($X,XXX) and "-").
  */
 function parseCellDollar(cellHtml: string): number {
-  const text = cellHtml.replace(/<[^>]*>/g, '').trim();
-  if (text === '-' || text === '') return 0;
-  return parseDollar(text.replace(/[()]/g, ''));
+  // Prefer data-sort attribute (clean numeric value, no HTML nesting issues)
+  const dataSort = cellHtml.match(/data-sort="([\d.]+)"/);
+  if (dataSort) return Math.round(parseFloat(dataSort[1]) / 1000);
+
+  // Fallback: extract first dollar amount only (avoid concatenation from nested elements)
+  const firstDollar = cellHtml.replace(/<[^>]*>/g, '').match(/\$[\d,]+/);
+  if (!firstDollar) return 0;
+  return parseDollar(firstDollar[0]);
 }
 
 /**
