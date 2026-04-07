@@ -7,3 +7,7 @@ data/*
 src/data/prospects.ts
 src/data/rosters.ts
 src/data/draftOrder.ts
+src/data/*.docx
+src/data/*.xlsx
+src/data/*.txt
+src/data/NFL Draft Picks/
