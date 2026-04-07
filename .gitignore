@@ -11,3 +11,4 @@ src/data/*.docx
 src/data/*.xlsx
 src/data/*.txt
 src/data/NFL Draft Picks/
+scripts/trade-machine-*.json
