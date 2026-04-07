@@ -1,0 +1,12 @@
+{
+  "ARI": {
+    "Kyler Murray": { "incomingCap": 5142500, "deadCap": 0 },
+    "Budda Baker": { "incomingCap": 16155000, "deadCap": 7122500 },
+    "Josh Sweat": { "incomingCap": 12685000, "deadCap": 22020000 }
+  },
+  "BUF": {
+    "Josh Allen": { "incomingCap": 16440000, "deadCap": 97906668 },
+    "Ed Oliver": { "incomingCap": 9400000, "deadCap": 9966900 },
+    "Khalil Shakir": { "incomingCap": 1197000, "deadCap": 3627432 }
+  }
+}
