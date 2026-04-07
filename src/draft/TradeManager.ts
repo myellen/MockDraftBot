@@ -475,12 +475,15 @@ export class TradeManager {
     // Save to history before removing
     this.state.tradeHistory.push(trade);
 
-    // Remove this trade and cancel any overlapping pending trades
-    const involved = new Set([...trade.offeredOveralls, ...trade.requestedOveralls]);
+    // Remove this trade and cancel any overlapping pending trades (picks or players)
+    const involvedPicks = new Set([...trade.offeredOveralls, ...trade.requestedOveralls]);
+    const involvedPlayers = new Set([...trade.offeredPlayers, ...trade.requestedPlayers].map(p => p.toLowerCase()));
     this.state.pendingTrades = this.state.pendingTrades.filter(t =>
       t.id !== tradeId &&
-      !t.offeredOveralls.some(o => involved.has(o)) &&
-      !t.requestedOveralls.some(o => involved.has(o))
+      !t.offeredOveralls.some(o => involvedPicks.has(o)) &&
+      !t.requestedOveralls.some(o => involvedPicks.has(o)) &&
+      !t.offeredPlayers.some(p => involvedPlayers.has(p.toLowerCase())) &&
+      !t.requestedPlayers.some(p => involvedPlayers.has(p.toLowerCase()))
     );
 
     await this.host.persist();
@@ -488,7 +491,7 @@ export class TradeManager {
 
     // If the current pick was part of this trade, reset the clock for the new owner
     const currentSlot = this.state.schedule[this.state.currentPickIndex];
-    if (currentSlot && involved.has(currentSlot.overall)) {
+    if (currentSlot && involvedPicks.has(currentSlot.overall)) {
       this.host.clearTimer();
       await this.host.refreshClock();
     }
@@ -610,8 +613,8 @@ export class TradeManager {
     await this.host.sendEmbed(buildTradeExecutedEmbed(trade, TEAMS, this.state.schedule));
 
     const currentSlot = this.state.schedule[this.state.currentPickIndex];
-    const involved = new Set([...offeredOveralls, ...requestedOveralls]);
-    if (currentSlot && involved.has(currentSlot.overall)) {
+    const involvedPicks = new Set([...offeredOveralls, ...requestedOveralls]);
+    if (currentSlot && involvedPicks.has(currentSlot.overall)) {
       this.host.clearTimer();
       await this.host.refreshClock();
     }
@@ -626,6 +629,13 @@ export class TradeManager {
   isPickInPendingTrade(overall: number): boolean {
     return this.state.pendingTrades.some(t =>
       t.offeredOveralls.includes(overall) || t.requestedOveralls.includes(overall)
+    );
+  }
+
+  /** Remove any pending trades that include this pick (called after a pick is made). */
+  invalidateTradesForPick(overall: number): void {
+    this.state.pendingTrades = this.state.pendingTrades.filter(t =>
+      !t.offeredOveralls.includes(overall) && !t.requestedOveralls.includes(overall)
     );
   }
 

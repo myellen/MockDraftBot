@@ -446,6 +446,9 @@ export class DraftManager {
 
     this.state.picks.push(pick);
 
+    // Invalidate any pending trades that included this pick
+    this.trades.invalidateTradesForPick(slot.overall);
+
     // Announce in channel
     const embed = buildPickEmbed(pick, slot, TEAMS[slot.currentTeam]);
     await this.sendEmbed(embed);
