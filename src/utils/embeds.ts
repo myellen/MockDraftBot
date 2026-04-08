@@ -226,17 +226,47 @@ export function buildPendingTradesEmbed(
   return embed;
 }
 
-export function buildTeamRosterEmbed(team: Team, abbr: string, picks: CompletedPick[]): EmbedBuilder {
+export function buildTeamRosterEmbed(team: Team, abbr: string, picks: CompletedPick[], trades?: PendingTrade[], schedule?: PickSlot[]): EmbedBuilder {
   const rows = picks.length
     ? picks.map(p =>
         `**R${p.round}** #${p.overall}: **${p.prospectName}** (${p.pos}, ${p.school})${p.autoPicked ? ' ⚡' : ''}`
       ).join('\n')
     : '_No picks yet._';
 
+  let description = rows;
+
+  if (trades?.length) {
+    const teamTrades = trades.filter(t => t.proposerTeam === abbr || t.receiverTeam === abbr);
+    if (teamTrades.length > 0) {
+      const slotMap = new Map(schedule?.map(s => [s.overall, s]) ?? []);
+      const tradeLines = teamTrades.map(t => {
+        const isProposer = t.proposerTeam === abbr;
+        const otherTeam = isProposer ? t.receiverTeam : t.proposerTeam;
+        const sent = isProposer ? t.offeredOveralls : t.requestedOveralls;
+        const received = isProposer ? t.requestedOveralls : t.offeredOveralls;
+        const sentPlayers = isProposer ? t.offeredPlayers : t.requestedPlayers;
+        const receivedPlayers = isProposer ? t.requestedPlayers : t.offeredPlayers;
+        const sentFuture = isProposer ? t.offeredFuturePicks : t.requestedFuturePicks;
+        const receivedFuture = isProposer ? t.requestedFuturePicks : t.offeredFuturePicks;
+
+        const fmtPick = (o: number) => { const s = slotMap.get(o); return s ? `R${s.round} #${o}` : `#${o}`; };
+        const parts: string[] = [];
+        if (sent.length) parts.push(`Sent ${sent.map(fmtPick).join(', ')}`);
+        if (sentPlayers.length) parts.push(`Sent ${sentPlayers.join(', ')}`);
+        if (sentFuture.length) parts.push(`Sent ${sentFuture.length} future pick${sentFuture.length !== 1 ? 's' : ''}`);
+        if (received.length) parts.push(`Got ${received.map(fmtPick).join(', ')}`);
+        if (receivedPlayers.length) parts.push(`Got ${receivedPlayers.join(', ')}`);
+        if (receivedFuture.length) parts.push(`Got ${receivedFuture.length} future pick${receivedFuture.length !== 1 ? 's' : ''}`);
+        return `↔ **${otherTeam}**: ${parts.join(' · ')}`;
+      });
+      description += `\n\n**Trades:**\n${tradeLines.join('\n')}`;
+    }
+  }
+
   return new EmbedBuilder()
     .setColor(team?.color ?? DEFAULT_COLOR)
     .setTitle(`🏈 ${team.name}`)
-    .setDescription(rows)
+    .setDescription(description.slice(0, 4096))
     .setFooter({ text: `${abbr} · ${picks.length} pick${picks.length !== 1 ? 's' : ''}` });
 }
 

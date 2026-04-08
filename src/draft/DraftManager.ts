@@ -2,7 +2,7 @@ import { Client, TextChannel } from 'discord.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import {
-  DraftState, DraftStatus, DraftConfig, CompletedPick,
+  DraftState, DraftStatus, DraftConfig, CompletedPick, CancelledTrade,
   PickSlot, PickResult, RegisterResult, PendingTrade, FuturePickRight, BoardData,
 } from './types';
 import { TradeManager } from './TradeManager';
@@ -63,6 +63,7 @@ const DEFAULT_STATE: DraftState = {
   timerExpiresAt: null,
   pendingTrades: [],
   tradeHistory: [],
+  cancelledTrades: [],
   playerOwnership: {},
   futurePickRights: buildFuturePickRights(),
 };
@@ -108,6 +109,7 @@ export class DraftManager {
           coManagers: (raw.coManagers as Record<string, string[]> | undefined) ?? {},
           pendingTrades: (raw.pendingTrades as PendingTrade[] | undefined) ?? [],
           tradeHistory: (raw.tradeHistory as PendingTrade[] | undefined) ?? [],
+          cancelledTrades: (raw.cancelledTrades as CancelledTrade[] | undefined) ?? [],
           playerOwnership: (raw.playerOwnership as Record<string, string> | undefined) ?? {},
           futurePickRights: (raw.futurePickRights as FuturePickRight[] | undefined) ?? buildFuturePickRights(),
           config: { ...(parsed.config as DraftConfig), rounds: (parsed.config as DraftConfig).rounds ?? 7, allowPlayerTrades: (parsed.config as DraftConfig).allowPlayerTrades ?? true, tradeAnnouncement: (parsed.config as DraftConfig).tradeAnnouncement ?? 'intrigue' },
@@ -245,6 +247,7 @@ export class DraftManager {
       timerExpiresAt: null,
       pendingTrades: [],
       tradeHistory: [],
+      cancelledTrades: [],
     };
     await this.persist();
   }
@@ -559,7 +562,7 @@ export class DraftManager {
     for (let i = 0; i < teamAbbrs.length; i += 10) {
       const batch = teamAbbrs.slice(i, i + 10);
       const embeds = batch.map(abbr =>
-        buildTeamRosterEmbed(TEAMS[abbr], abbr, this.state.picks.filter(p => p.team === abbr))
+        buildTeamRosterEmbed(TEAMS[abbr], abbr, this.state.picks.filter(p => p.team === abbr), this.state.tradeHistory, this.state.schedule)
       );
       await this.sendEmbeds(embeds);
       if (i + 10 < teamAbbrs.length) await delay(800);

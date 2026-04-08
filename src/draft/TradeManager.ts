@@ -1,6 +1,6 @@
 import { EmbedBuilder } from 'discord.js';
 import {
-  DraftState, PendingTrade, PlayerSalary, TeamCapInfo,
+  DraftState, PendingTrade, CancelledTrade, PlayerSalary, TeamCapInfo, TradeCancelReason,
 } from './types';
 import { TEAMS } from '../data/teams';
 import { ROSTERS } from '../data/rosters';
@@ -41,6 +41,13 @@ export class TradeManager {
     private state: DraftState,
     private host: TradeManagerHost,
   ) {}
+
+  private cancelTrades(trades: PendingTrade[], reason: TradeCancelReason): void {
+    const now = Date.now();
+    for (const t of trades) {
+      this.state.cancelledTrades.push({ ...t, cancelReason: reason, cancelledAt: now });
+    }
+  }
 
   // ─── Salary Cap ───────────────────────────────────────────────────────────
 
@@ -478,12 +485,17 @@ export class TradeManager {
     // Remove this trade and cancel any overlapping pending trades (picks or players)
     const involvedPicks = new Set([...trade.offeredOveralls, ...trade.requestedOveralls]);
     const involvedPlayers = new Set([...trade.offeredPlayers, ...trade.requestedPlayers].map(p => p.toLowerCase()));
+    const superseded = this.state.pendingTrades.filter(t =>
+      t.id !== tradeId && (
+        t.offeredOveralls.some(o => involvedPicks.has(o)) ||
+        t.requestedOveralls.some(o => involvedPicks.has(o)) ||
+        t.offeredPlayers.some(p => involvedPlayers.has(p.toLowerCase())) ||
+        t.requestedPlayers.some(p => involvedPlayers.has(p.toLowerCase()))
+      )
+    );
+    this.cancelTrades(superseded, 'superseded');
     this.state.pendingTrades = this.state.pendingTrades.filter(t =>
-      t.id !== tradeId &&
-      !t.offeredOveralls.some(o => involvedPicks.has(o)) &&
-      !t.requestedOveralls.some(o => involvedPicks.has(o)) &&
-      !t.offeredPlayers.some(p => involvedPlayers.has(p.toLowerCase())) &&
-      !t.requestedPlayers.some(p => involvedPlayers.has(p.toLowerCase()))
+      t.id !== tradeId && !superseded.some(s => s.id === t.id)
     );
 
     await this.host.persist();
@@ -509,6 +521,7 @@ export class TradeManager {
       return { success: false, error: 'You are not part of this trade.' };
     }
 
+    this.cancelTrades([trade], 'declined');
     this.state.pendingTrades = this.state.pendingTrades.filter(t => t.id !== tradeId);
     await this.host.persist();
     return { success: true };
@@ -626,6 +639,10 @@ export class TradeManager {
     return this.state.tradeHistory;
   }
 
+  getCancelledTrades(): CancelledTrade[] {
+    return this.state.cancelledTrades;
+  }
+
   isPickInPendingTrade(overall: number): boolean {
     return this.state.pendingTrades.some(t =>
       t.offeredOveralls.includes(overall) || t.requestedOveralls.includes(overall)
@@ -634,13 +651,19 @@ export class TradeManager {
 
   /** Remove any pending trades that include this pick (called after a pick is made). */
   invalidateTradesForPick(overall: number): void {
+    const invalidated = this.state.pendingTrades.filter(t =>
+      t.offeredOveralls.includes(overall) || t.requestedOveralls.includes(overall)
+    );
+    this.cancelTrades(invalidated, 'picked');
     this.state.pendingTrades = this.state.pendingTrades.filter(t =>
-      !t.offeredOveralls.includes(overall) && !t.requestedOveralls.includes(overall)
+      !invalidated.some(inv => inv.id === t.id)
     );
   }
 
   private cleanExpiredTrades(): void {
     const now = Date.now();
+    const expired = this.state.pendingTrades.filter(t => t.expiresAt <= now);
+    this.cancelTrades(expired, 'expired');
     this.state.pendingTrades = this.state.pendingTrades.filter(t => t.expiresAt > now);
   }
 }

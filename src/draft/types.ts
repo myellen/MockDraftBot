@@ -87,6 +87,13 @@ export interface PendingTrade {
   expiresAt: number;
 }
 
+export type TradeCancelReason = 'declined' | 'expired' | 'superseded' | 'picked';
+
+export interface CancelledTrade extends PendingTrade {
+  cancelReason: TradeCancelReason;
+  cancelledAt: number;
+}
+
 export interface DraftState {
   schemaVersion: number;
   status: DraftStatus;
@@ -100,6 +107,7 @@ export interface DraftState {
   timerExpiresAt: number | null;           // Date.now() ms, for restart resilience
   pendingTrades: PendingTrade[];
   tradeHistory: PendingTrade[];            // completed trades (for admin undo)
+  cancelledTrades: CancelledTrade[];      // declined, expired, or invalidated trades
   playerOwnership: Record<string, string>; // playerName (lowercase) -> teamAbbr overrides
   futurePickRights: FuturePickRight[];     // tradeable future-year picks
 }

@@ -12,6 +12,7 @@ import * as helpCmd      from './help';
 import * as inventoryCmd from './inventory';
 import * as upcomingCmd  from './upcoming';
 import * as recapCmd     from './recap';
+import * as tradeHistoryCmd from './trade-history';
 
 interface Command {
   data: { name: string; toJSON(): unknown };
@@ -31,6 +32,7 @@ export const commands: Command[] = [
   inventoryCmd,
   upcomingCmd,
   recapCmd,
+  tradeHistoryCmd,
 ];
 
 export const commandMap = new Map<string, Command>(

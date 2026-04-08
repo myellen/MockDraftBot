@@ -140,6 +140,12 @@ export async function execute(
         inline: false,
       },
       {
+        name: 'Trade History — `/trade-history`',
+        value:
+          'View all completed trades in chronological order.',
+        inline: false,
+      },
+      {
         name: '💡 Trade Tips',
         value:
           '• You can trade the pick you\'re **currently on the clock for** — the new owner will immediately be put on the clock.\n' +
@@ -185,7 +191,8 @@ export async function execute(
           '• `/draft admin assign team: user:` — assign any team to any user\n' +
           '• `/draft admin co-manager team: user:` — add a co-manager to any team\n' +
           '• `/draft admin undo-trade id:` — reverse a completed trade (autocomplete shows history)\n' +
-          '• `/draft admin pick` — make a pick for the team currently on the clock',
+          '• `/draft admin pick` — make a pick for the team currently on the clock\n' +
+          '• `/draft admin forceautopick` — force an auto-pick using the team\'s board/priority',
         inline: false,
       },
       {
