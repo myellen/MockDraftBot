@@ -26,6 +26,7 @@ function boardPath(guildId: string): string {
 const DEFAULT_BOARD_DATA: BoardData = {
   customBoards: {},
   positionPriority: {},
+  strategyNotes: {},
 };
 
 function buildFuturePickRights(): FuturePickRight[] {
@@ -137,6 +138,7 @@ export class DraftManager {
       boardData = {
         customBoards: parsed.customBoards ?? {},
         positionPriority: parsed.positionPriority ?? {},
+        strategyNotes: (parsed as any).strategyNotes ?? {},
       };
     } catch {
       boardData = { ...DEFAULT_BOARD_DATA };
@@ -340,10 +342,12 @@ export class DraftManager {
 
     const ranks: number[] = [];
     const unmatched: string[] = [];
-    for (const name of rankedNames) {
+    for (const rawName of rankedNames) {
+      // Strip parenthetical suffixes like "(QB, Alabama)" that LLMs sometimes append
+      const name = rawName.replace(/\s*\(.*\)\s*$/, '').trim();
       const rank = nameToRank.get(name.toLowerCase());
       if (rank !== undefined) ranks.push(rank);
-      else unmatched.push(name);
+      else unmatched.push(rawName);
     }
     this.boardData.customBoards[teamAbbr] = ranks;
     void this.persistBoards();
@@ -358,6 +362,7 @@ export class DraftManager {
   clearBoard(teamAbbr: string, what: 'board' | 'priority' | 'all'): void {
     if (what === 'board' || what === 'all') delete this.boardData.customBoards[teamAbbr];
     if (what === 'priority' || what === 'all') delete this.boardData.positionPriority[teamAbbr];
+    if (what === 'all') delete this.boardData.strategyNotes[teamAbbr];
     void this.persistBoards();
   }
 
@@ -369,6 +374,18 @@ export class DraftManager {
     return this.boardData.positionPriority[teamAbbr] ?? [];
   }
 
+  getStrategyNotes(teamAbbr: string): string[] {
+    return this.boardData.strategyNotes[teamAbbr] ?? [];
+  }
+
+  addStrategyNote(teamAbbr: string, note: string, maxNotes = 5): void {
+    const notes = this.boardData.strategyNotes[teamAbbr] ?? [];
+    notes.push(note);
+    if (notes.length > maxNotes) notes.splice(0, notes.length - maxNotes);
+    this.boardData.strategyNotes[teamAbbr] = notes;
+    void this.persistBoards();
+  }
+
   getMyBoardPage(teamAbbr: string, page: number, pageSize = 20): {
     entries: { boardPos: number; rank: number; name: string; pos: string; school: string; available: boolean }[];
     total: number;
@@ -376,7 +393,10 @@ export class DraftManager {
     page: number;
   } {
     const board = this.boardData.customBoards[teamAbbr] ?? [];
-    const available = new Set(this.state.availableRanks);
+    // Before draft starts, availableRanks is empty — treat all prospects as available
+    const available = this.state.availableRanks.length > 0
+      ? new Set(this.state.availableRanks)
+      : new Set(PROSPECTS_DEDUPED.map(p => p.rank));
     const total = board.length;
     const totalPages = Math.max(1, Math.ceil(total / pageSize));
     const safePage = Math.min(Math.max(1, page), totalPages);
@@ -694,7 +714,6 @@ export class DraftManager {
 
     return current
       .filter(p => p.name.toLowerCase().includes(q))
-      .slice(0, 25)
       .map(p => ({ name: p.name, pos: p.pos }));
   }
 
