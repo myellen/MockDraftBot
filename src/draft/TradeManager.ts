@@ -95,7 +95,7 @@ export class TradeManager {
 
       const tradedTo = this.state.playerOwnership[key];
       if (tradedTo !== undefined && tradedTo !== teamAbbr) {
-        deadMoney += salary.deadMoney;
+        deadMoney += salary.tradeDeadCap ?? salary.deadMoney;
       } else {
         activeCharges.push(salary.capHit);
       }
@@ -104,7 +104,7 @@ export class TradeManager {
     // 1b. Dead money from players NOT on the roster (voided/released/traded pre-draft)
     for (const [key, salary] of Object.entries(teamSalaries)) {
       if (rosterNames.has(key)) continue;
-      deadMoney += salary.capHit;
+      deadMoney += salary.deadMoney;
     }
 
     // 2. Add players traded IN from other teams
@@ -116,7 +116,7 @@ export class TradeManager {
       if (!origTeam) continue;
       const origSalary = SALARIES[origTeam]?.[nameLower];
       if (!origSalary) continue;
-      activeCharges.push(origSalary.baseSalary);
+      activeCharges.push(origSalary.tradeIncomingCap ?? origSalary.baseSalary);
     }
 
     // 3. Add rookie cap hits for drafted players on this team
@@ -185,14 +185,17 @@ export class TradeManager {
 
       const wasOriginallyOnProposer = origTeam === trade.proposerTeam;
 
+      const deadCap = salary.tradeDeadCap ?? salary.deadMoney;
+      const incomingCap = salary.tradeIncomingCap ?? salary.baseSalary;
+
       if (wasOriginallyOnProposer) {
-        // Sender loses the capHit, keeps deadMoney; receiver takes on baseSalary (transferable cap)
-        proposerCapDelta += salary.deadMoney - salary.capHit;
-        receiverCapDelta -= salary.baseSalary;
+        // Sender loses the capHit, keeps deadMoney; receiver takes on incoming cap
+        proposerCapDelta += deadCap - salary.capHit;
+        receiverCapDelta -= incomingCap;
       } else {
-        // Player was traded to proposer previously — transferable is baseSalary
-        proposerCapDelta += salary.baseSalary;
-        receiverCapDelta -= salary.baseSalary;
+        // Player was traded to proposer previously — transferable is incoming cap
+        proposerCapDelta += incomingCap;
+        receiverCapDelta -= incomingCap;
       }
     }
 
@@ -204,15 +207,17 @@ export class TradeManager {
       if (!salary) continue;
 
       const wasOriginallyOnReceiver = origTeam === trade.receiverTeam;
+      const deadCap = salary.tradeDeadCap ?? salary.deadMoney;
+      const incomingCap = salary.tradeIncomingCap ?? salary.baseSalary;
 
       if (wasOriginallyOnReceiver) {
-        // Sender loses the capHit, keeps deadMoney; receiver takes on baseSalary
-        receiverCapDelta += salary.deadMoney - salary.capHit;
-        proposerCapDelta -= salary.baseSalary;
+        // Sender loses the capHit, keeps deadMoney; receiver takes on incoming cap
+        receiverCapDelta += deadCap - salary.capHit;
+        proposerCapDelta -= incomingCap;
       } else {
         // Player was traded to receiver previously
-        receiverCapDelta += salary.baseSalary;
-        proposerCapDelta -= salary.baseSalary;
+        receiverCapDelta += incomingCap;
+        proposerCapDelta -= incomingCap;
       }
     }
 
@@ -298,7 +303,7 @@ export class TradeManager {
         const origTeam = this.getPlayerOriginalSalaryTeam(name.toLowerCase());
         if (origTeam === team) {
           const salary = SALARIES[origTeam]?.[name.toLowerCase()];
-          if (salary) addedDead += salary.deadMoney;
+          if (salary) addedDead += salary.tradeDeadCap ?? salary.deadMoney;
         }
       }
       const projectedDead = capInfo.deadMoney + addedDead;

@@ -167,7 +167,7 @@ export async function execute(
           '• You can trade the pick you\'re **currently on the clock for** — the new owner will immediately be put on the clock.\n' +
           '• Picks can be entered as overall # (`5`), round.pick (`1.5`), or chosen from the dropdown.\n' +
           '• Players can be entered by name or jersey number.\n' +
-          '• Future picks use the format `YYYYRn` — e.g. `2027R1` for a 2027 first-round pick.\n' +
+          '• Future picks use the format `YYYYRn` — e.g. `2027R1` for a 2027 first-round pick. If a team has multiple picks in the same round, add `-TEAM` to specify which (e.g. `2027R5-CAR` for the pick originally from Carolina). Without `-TEAM`, defaults to the team\'s own pick.\n' +
           '• Trades expire after **24 hours** if not accepted.\n' +
           '• A pick can appear in multiple proposals — when one is accepted, overlapping trades are automatically cancelled.',
         inline: false,

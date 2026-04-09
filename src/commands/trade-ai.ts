@@ -84,7 +84,10 @@ function buildTradeSystemPrompt(
         : '(none loaded)';
 
       const futureStr = futures.length > 0
-        ? futures.map(f => `${f.year}R${f.round}`).join(', ')
+        ? futures.map(f => {
+            const via = f.originalTeam !== abbr ? ` (via ${f.originalTeam})` : '';
+            return `${f.year}R${f.round}${via}`;
+          }).join(', ')
         : '';
 
       let section = `### ${name} (${abbr})\n  Picks: ${picksStr}\n  Roster: ${rosterStr}`;
@@ -132,7 +135,7 @@ ${recentPicksStr}
 - This is the **2026 NFL Draft**. The picks listed under "Available Draft Picks (current year)" are 2026 picks.
 - When the user says "first round pick", "2026 first", "my 1st rounder", etc., they mean a CURRENT YEAR pick — find the matching pick by round from the "Available Draft Picks" lists and use its OVERALL number in "offeredPicks" or "requestedPicks".
 - "offeredPicks" and "requestedPicks" use OVERALL pick numbers (not round.pick notation) — these are for current-year (2026) picks ONLY.
-- "offeredFuturePicks" and "requestedFuturePicks" are for picks in FUTURE years (2027, 2028) ONLY — use format like "2027R1", "2028R3". NEVER put 2026 picks here.
+- "offeredFuturePicks" and "requestedFuturePicks" are for picks in FUTURE years (2027, 2028) ONLY — use format like "2027R1", "2028R3". NEVER put 2026 picks here. If a team has multiple picks in the same round (e.g. their own + one acquired via trade), append the original team abbreviation to disambiguate: "2027R5-CAR" means the 2027 5th-round pick that originally belonged to CAR. Without the suffix, the team's OWN pick is assumed.
 - "offeredPlayers" and "requestedPlayers" use exact player names as shown in the rosters above
 - "offered" means what the user's team GIVES UP
 - "requested" means what the user's team RECEIVES
@@ -283,13 +286,14 @@ export async function execute(
       return;
     }
 
-    // Parse future picks into IDs
+    // Parse future picks into IDs (supports optional -TEAM suffix e.g. 2027R5-CAR)
     const parseFuturePickStr = (s: string, teamAbbr: string): string | null => {
-      const m = s.match(/^(\d{4})[Rr](\d)$/);
+      const m = s.match(/^(\d{4})[Rr](\d)(?:-([A-Z]{2,3}))?$/);
       if (!m) return null;
       const year = parseInt(m[1], 10);
       const round = parseInt(m[2], 10);
-      const right = manager.resolveFuturePickRight(teamAbbr, year, round);
+      const origTeam = m[3] || undefined;
+      const right = manager.resolveFuturePickRight(teamAbbr, year, round, origTeam);
       return right?.id ?? null;
     };
 

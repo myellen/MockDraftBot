@@ -186,20 +186,24 @@ export async function execute(
       return result;
     };
 
-    // Parse "2027R1,2028R3" → FuturePickRight ids for a given team
+    // Parse "2027R1,2028R3,2027R5-CAR" → FuturePickRight ids for a given team
     const parseFuturePicks = (s: string, teamAbbr: string): string[] | string => {
       if (!s.trim()) return [];
       const entries = s.split(',').map(e => e.trim()).filter(Boolean);
       const ids: string[] = [];
       for (const entry of entries) {
-        const m = entry.match(/^(\d{4})[Rr](\d)$/);
-        if (!m) return `Invalid future pick format "${entry}". Use e.g. 2027R1,2028R3`;
+        const m = entry.match(/^(\d{4})[Rr](\d)(?:-([A-Z]{2,3}))?$/);
+        if (!m) return `Invalid future pick format "${entry}". Use e.g. 2027R1, 2027R5-CAR`;
         const year = parseInt(m[1], 10);
         const round = parseInt(m[2], 10);
+        const origTeam = m[3] || undefined;
         if (year < 2027 || year > 2028) return `Year must be 2027–2028 (got ${year})`;
         if (round < 1 || round > 7) return `Round must be 1–7 (got ${round})`;
-        const right = manager.resolveFuturePickRight(teamAbbr, year, round);
-        if (!right) return `No ${year} Round ${round} pick found for your team.`;
+        const right = manager.resolveFuturePickRight(teamAbbr, year, round, origTeam);
+        if (!right) {
+          const suffix = origTeam ? ` (originally ${origTeam})` : '';
+          return `No ${year} Round ${round}${suffix} pick found for your team.`;
+        }
         ids.push(right.id);
       }
       return ids;
@@ -434,14 +438,18 @@ export async function execute(
       const entries = s.split(',').map(e => e.trim()).filter(Boolean);
       const ids: string[] = [];
       for (const entry of entries) {
-        const m = entry.match(/^(\d{4})[Rr](\d)$/);
-        if (!m) return `Invalid future pick format "${entry}". Use e.g. 2027R1,2028R3`;
+        const m = entry.match(/^(\d{4})[Rr](\d)(?:-([A-Z]{2,3}))?$/);
+        if (!m) return `Invalid future pick format "${entry}". Use e.g. 2027R1, 2027R5-CAR`;
         const year = parseInt(m[1], 10);
         const round = parseInt(m[2], 10);
+        const origTeam = m[3] || undefined;
         if (year < 2027 || year > 2028) return `Year must be 2027–2028 (got ${year})`;
         if (round < 1 || round > 7) return `Round must be 1–7 (got ${round})`;
-        const right = manager.resolveFuturePickRight(teamAbbr, year, round);
-        if (!right) return `No ${year} Round ${round} pick found for that team.`;
+        const right = manager.resolveFuturePickRight(teamAbbr, year, round, origTeam);
+        if (!right) {
+          const suffix = origTeam ? ` (originally ${origTeam})` : '';
+          return `No ${year} Round ${round}${suffix} pick found for that team.`;
+        }
         ids.push(right.id);
       }
       return ids;

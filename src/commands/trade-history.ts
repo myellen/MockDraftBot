@@ -100,8 +100,6 @@ export async function execute(
     .setTitle('📊 Trade Leaderboard')
     .setDescription(leaderboardLines.join('\n'));
 
-  embeds.push(leaderboard);
-
   // Build hit rate leaderboard
   const cancelled = manager.trades.getCancelledTrades();
   const assignments = manager.getState().assignments;
@@ -149,7 +147,7 @@ export async function execute(
     .setTitle('🎯 Trade Hit Rate')
     .setDescription(hitRateLines.join('\n'));
 
-  embeds.push(hitRateEmbed);
-
+  // Send trade history embeds first (reply), then leaderboards (followUp)
   await interaction.reply({ embeds: embeds.slice(0, 10) });
+  await interaction.followUp({ embeds: [leaderboard, hitRateEmbed] });
 }

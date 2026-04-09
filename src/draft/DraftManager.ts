@@ -732,10 +732,16 @@ export class DraftManager {
   }
 
   /** Find a future pick right owned by a team, by year+round. Returns the right's id. */
-  resolveFuturePickRight(teamAbbr: string, year: number, round: number): FuturePickRight | null {
-    return this.state.futurePickRights.find(
+  resolveFuturePickRight(teamAbbr: string, year: number, round: number, originalTeam?: string): FuturePickRight | null {
+    const matches = this.state.futurePickRights.filter(
       r => r.currentTeam === teamAbbr && r.year === year && r.round === round
-    ) ?? null;
+    );
+    if (matches.length === 0) return null;
+    if (originalTeam) {
+      return matches.find(r => r.originalTeam === originalTeam) ?? null;
+    }
+    // Default to the team's own pick, otherwise first match
+    return matches.find(r => r.originalTeam === teamAbbr) ?? matches[0];
   }
 
   /** Resolve a pick's overall number from round.roundPick notation (e.g. 1.5 → 5). */

@@ -64,6 +64,16 @@ npx ts-node scripts/generate-rosters.ts    # Fetches current NFL rosters from ES
 npx ts-node scripts/generate-salaries.ts   # Fetches salary data from Spotrac/OTC
 ```
 
+### Invite the Bot
+
+Use this URL format to invite the bot to your server (replace `[CLIENT_ID]` with your application's client ID):
+
+```
+https://discord.com/oauth2/authorize?client_id=[CLIENT_ID]&permissions=379904&scope=bot%20applications.commands
+```
+
+This grants the bot: View Channels, Send Messages, Embed Links, Attach Files, Read Message History, and Use External Emojis.
+
 ### Deploy Commands & Run
 
 ```bash

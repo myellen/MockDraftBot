@@ -289,6 +289,176 @@ function loadTradeMachineData(): { full: Record<string, Record<string, { incomin
   }
 }
 
+// ── Name reconciliation ────────────────────────────────────────────────────
+// Manual aliases for players whose Spotrac and ESPN names are completely different
+const NAME_ALIASES: Record<string, string> = {
+  // Format: "spotrac name (lowercase)": "ESPN roster name (lowercase)"
+  // Nicknames that can't be detected automatically
+  'zonovan knight': 'bam knight',
+  'basil okoye': 'cj okoye',
+  'sauce gardner': 'ahmad gardner',   // reverse: ESPN has Sauce, Spotrac has Ahmad
+  'ahmad gardner': 'sauce gardner',
+};
+
+function normalizeName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/\b(jr|sr|ii|iii|iv|v)\.?\s*$/i, '')
+    .replace(/\./g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Check if two first names are plausible variants of the same name */
+function firstNameMatch(a: string, b: string): boolean {
+  if (a === b) return true;
+  // One is a prefix of the other (Josh/Joshua, Cam/Cameron, Pat/Patrick, Nate/Nathan, Matt/Matthew)
+  const shorter = a.length <= b.length ? a : b;
+  const longer = a.length <= b.length ? b : a;
+  if (shorter.length >= 3 && longer.startsWith(shorter)) return true;
+  // Common diminutives
+  const diminutives: Record<string, string[]> = {
+    'mike': ['michael'], 'michael': ['mike'],
+    'chris': ['christian', 'christopher'], 'christian': ['chris'], 'christopher': ['chris'],
+    'drew': ['andrew'], 'andrew': ['drew'],
+    'ted': ['teddy', 'theodore', 'tedarrell'], 'tedarrell': ['ted', 'tj'],
+    'tj': ['tedarrell'], 'cj': ['chauncey', 'basil'],
+    'chauncey': ['cj'], 'jp': ['john'],
+    'cobie': ['decobie'], 'decobie': ['cobie'],
+  };
+  if (diminutives[a]?.includes(b) || diminutives[b]?.includes(a)) return true;
+  return false;
+}
+
+function reconcileSalaryKeys(allSalaries: Record<string, Record<string, PlayerSalaryData>>): void {
+  // Load roster names from rosters.ts
+  const rostersFile = path.join(__dirname, '..', 'src', 'data', 'rosters.ts');
+  let rosterSrc: string;
+  try {
+    rosterSrc = fs.readFileSync(rostersFile, 'utf-8');
+  } catch {
+    console.error('\nWarning: Could not read rosters.ts for name reconciliation');
+    return;
+  }
+
+  // Parse roster names per team
+  const teamRosters: Record<string, string[]> = {};
+  const teamRegex = /^\s*(\w+):\s*\[/gm;
+  let match;
+  while ((match = teamRegex.exec(rosterSrc))) {
+    const abbr = match[1];
+    const startIdx = match.index + match[0].length;
+    const endIdx = rosterSrc.indexOf('],', startIdx);
+    const block = rosterSrc.slice(startIdx, endIdx);
+    const names: string[] = [];
+    const nameRegex = /name:\s*"([^"]+)"/g;
+    let nm;
+    while ((nm = nameRegex.exec(block))) names.push(nm[1]);
+    teamRosters[abbr] = names;
+  }
+
+  let reconciledNorm = 0;
+  let reconciledLast = 0;
+  let reconciledAlias = 0;
+
+  for (const [abbr, teamSalaries] of Object.entries(allSalaries)) {
+    const roster = teamRosters[abbr];
+    if (!roster) continue;
+
+    const rosterByLower = new Map(roster.map(n => [n.toLowerCase(), n]));
+    const rosterByNorm = new Map(roster.map(n => [normalizeName(n), n]));
+
+    // Build a set of salary keys that already match a roster name
+    const matchedRosterKeys = new Set<string>();
+    for (const salKey of Object.keys(teamSalaries)) {
+      if (rosterByLower.has(salKey)) matchedRosterKeys.add(salKey);
+    }
+
+    const salKeys = Object.keys(teamSalaries);
+
+    for (const salKey of salKeys) {
+      if (rosterByLower.has(salKey)) continue; // already exact match
+      if (salKey.includes('__dead')) continue;
+      if (!teamSalaries[salKey]) continue; // already re-keyed in this pass
+
+      // 1. Check manual aliases
+      const alias = NAME_ALIASES[salKey];
+      if (alias) {
+        const rosterName = rosterByLower.get(alias);
+        if (rosterName && !teamSalaries[alias]) {
+          teamSalaries[alias] = teamSalaries[salKey];
+          delete teamSalaries[salKey];
+          reconciledAlias++;
+          continue;
+        }
+      }
+
+      // 2. Normalize (strip suffixes, dots)
+      const normSal = normalizeName(salKey);
+      const rosterMatch = rosterByNorm.get(normSal);
+      if (rosterMatch) {
+        const rosterKey = rosterMatch.toLowerCase();
+        if (!teamSalaries[rosterKey]) {
+          teamSalaries[rosterKey] = teamSalaries[salKey];
+          delete teamSalaries[salKey];
+          reconciledNorm++;
+          continue;
+        }
+      }
+
+      // 3. Last-name match with first-name validation
+      const salLast = normSal.split(' ').pop()!;
+      if (salLast.length < 4) continue; // skip very short last names
+
+      const salFirst = normSal.split(' ')[0];
+
+      // Find unmatched roster entries with same last name
+      const candidates: Array<{ key: string; name: string }> = [];
+      for (const [rKey, rName] of rosterByLower) {
+        if (teamSalaries[rKey]) continue; // already has a salary entry
+        if (matchedRosterKeys.has(rKey)) continue;
+        const rNorm = normalizeName(rKey);
+        if (rNorm.split(' ').pop() === salLast) {
+          candidates.push({ key: rKey, name: rName });
+        }
+      }
+
+      // Check for other salary keys with same last name (ambiguity)
+      const salSameLast = salKeys.filter(k =>
+        k !== salKey && !k.includes('__dead') && teamSalaries[k] &&
+        normalizeName(k).split(' ').pop() === salLast
+      );
+
+      if (candidates.length === 1 && salSameLast.length === 0) {
+        const candFirst = normalizeName(candidates[0].key).split(' ')[0];
+        if (firstNameMatch(salFirst, candFirst)) {
+          teamSalaries[candidates[0].key] = teamSalaries[salKey];
+          delete teamSalaries[salKey];
+          matchedRosterKeys.add(candidates[0].key);
+          reconciledLast++;
+        }
+      }
+    }
+  }
+
+  console.error(`\nName reconciliation: ${reconciledNorm + reconciledLast + reconciledAlias} salary entries re-keyed`);
+  console.error(`  Normalization (suffix/dots): ${reconciledNorm}`);
+  console.error(`  Last-name + first-name match: ${reconciledLast}`);
+  console.error(`  Manual aliases: ${reconciledAlias}`);
+
+  // Report remaining mismatches
+  let remaining = 0;
+  for (const [abbr, teamSalaries] of Object.entries(allSalaries)) {
+    const roster = teamRosters[abbr];
+    if (!roster) continue;
+    const rosterSet = new Set(roster.map(n => n.toLowerCase()));
+    for (const key of Object.keys(teamSalaries)) {
+      if (!rosterSet.has(key) && !key.includes('__dead')) remaining++;
+    }
+  }
+  console.error(`  Remaining unmatched: ${remaining} (legitimate dead cap / off-roster)`);
+}
+
 async function main() {
   const allSalaries: Record<string, Record<string, PlayerSalaryData>> = {};
   const teams = Object.entries(SPOTRAC_SLUGS).sort((a, b) => a[0].localeCompare(b[0]));
@@ -347,8 +517,8 @@ async function main() {
           const newDead = Math.round(tm.deadCap / 1000);
           if (Math.abs(salary.baseSalary - newBase) > 1) baseDiffCount++;
           if (Math.abs(salary.deadMoney - newDead) > 1) deadDiffCount++;
-          salary.baseSalary = newBase;
-          salary.deadMoney = newDead;
+          (salary as any).tradeIncomingCap = newBase;
+          (salary as any).tradeDeadCap = newDead;
           overrideCount++;
         }
       }
@@ -396,12 +566,17 @@ async function main() {
     console.error('For accurate data, check that Spotrac/OTC URLs are accessible.\n');
   }
 
+  // ── Reconcile salary keys with roster names ─────────────────────────────
+  // Spotrac and ESPN use different name formats. Re-key salary entries so
+  // they match the roster names used at runtime.
+  reconcileSalaryKeys(allSalaries);
+
   // Generate TypeScript source
   const lines: string[] = [];
   lines.push("import { PlayerSalary } from '../draft/types';");
   lines.push('');
-  lines.push('// 2026 NFL salary cap (estimated) in thousands of dollars');
-  lines.push('export const SALARY_CAP = 301200;');
+  lines.push('// 2026 NFL salary cap in thousands of dollars');
+  lines.push('export const SALARY_CAP = 313450;');
   lines.push('');
   lines.push('// Rookie minimum salary in thousands (used for Rule of 51 / pick cap impact)');
   lines.push('export const ROOKIE_MINIMUM = 885;');
@@ -444,7 +619,11 @@ async function main() {
     lines.push(`  ${/^\d/.test(abbr) ? `"${abbr}"` : abbr}: {`);
     for (const [name, salary] of entries) {
       const escapedName = name.replace(/"/g, '\\"');
-      lines.push(`    "${escapedName}": { capHit: ${salary.capHit}, deadMoney: ${salary.deadMoney}, baseSalary: ${salary.baseSalary} },`);
+      const s = salary as any;
+      const extra = (s.tradeDeadCap !== undefined || s.tradeIncomingCap !== undefined)
+        ? `, tradeDeadCap: ${s.tradeDeadCap ?? 0}, tradeIncomingCap: ${s.tradeIncomingCap ?? 0}`
+        : '';
+      lines.push(`    "${escapedName}": { capHit: ${salary.capHit}, deadMoney: ${salary.deadMoney}, baseSalary: ${salary.baseSalary}${extra} },`);
     }
     lines.push('  },');
   }

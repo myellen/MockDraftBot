@@ -6,9 +6,11 @@ export interface Prospect {
 }
 
 export interface PlayerSalary {
-  capHit: number;      // Total cap hit in thousands (e.g. 20000 = $20M)
-  deadMoney: number;   // Dead money if traded (prorated bonus remaining), in thousands
-  baseSalary: number;  // Transferable cap in thousands (capHit minus prorated bonuses); the cap charge the receiving team takes on in a trade
+  capHit: number;            // Total cap hit in thousands (e.g. 20000 = $20M)
+  deadMoney: number;         // Dead money currently on the books (from Spotrac), in thousands
+  baseSalary: number;        // Transferable cap in thousands (capHit minus prorated bonuses); estimated from Spotrac
+  tradeDeadCap?: number;     // Dead cap acceleration if traded pre-June 1 (from trade machine), in thousands
+  tradeIncomingCap?: number; // Cap charge receiving team takes on in a trade (from trade machine), in thousands
 }
 
 export interface TeamCapInfo {
