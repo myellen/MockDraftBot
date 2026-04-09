@@ -118,17 +118,13 @@ export async function execute(
     }
   };
   for (const t of history) {
-    for (const abbr of [t.proposerTeam, t.receiverTeam]) {
-      ensureTeam(abbr);
-      hitRateData.get(abbr)!.accepted++;
-      hitRateData.get(abbr)!.total++;
-    }
+    ensureTeam(t.proposerTeam);
+    hitRateData.get(t.proposerTeam)!.accepted++;
+    hitRateData.get(t.proposerTeam)!.total++;
   }
   for (const t of cancelled) {
-    for (const abbr of [t.proposerTeam, t.receiverTeam]) {
-      ensureTeam(abbr);
-      hitRateData.get(abbr)!.total++;
-    }
+    ensureTeam(t.proposerTeam);
+    hitRateData.get(t.proposerTeam)!.total++;
   }
   const hitRateSorted = [...hitRateData.values()]
     .filter(e => e.total > 0)

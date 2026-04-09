@@ -204,6 +204,6 @@ export async function execute(
       },
     );
 
-  await interaction.reply({ embeds: [overview, trading] });
+  await interaction.reply({ embeds: [overview, trading], ephemeral: true });
   await interaction.followUp({ embeds: [admin], ephemeral: true });
 }
