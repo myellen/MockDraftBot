@@ -6,7 +6,6 @@ import { DraftManager, formatCapAmount } from '../draft/DraftManager';
 import { TEAMS } from '../data/teams';
 import { SALARIES } from '../data/salaries';
 import { isOllamaConfigured, chatJSON } from '../llm/OllamaService';
-import { buildPendingTradesEmbed, buildTradeExecutedEmbed } from '../utils/embeds';
 
 export const data = new SlashCommandBuilder()
   .setName('trade-ai')
@@ -29,63 +28,109 @@ interface TradeAIResponse {
   error?: string;
 }
 
+/**
+ * Build a full context snapshot for the LLM trade agent.
+ * Treat it like a fresh agent — give it everything it needs in one shot.
+ */
 function buildTradeSystemPrompt(
   myTeam: string,
   myTeamName: string,
   myPicks: Array<{ overall: number; round: number; roundPick: number; originalTeam: string }>,
-  myPlayers: Array<{ name: string; pos: string }>,
+  myRoster: Array<{ name: string; pos: string }>,
   myFuturePicks: Array<{ id: string; year: number; round: number; originalTeam: string }>,
-  allTeams: Record<string, { name: string; abbr: string }>,
-  allPicksByTeam: Record<string, Array<{ overall: number; round: number; roundPick: number }>>,
-  allFuturePicksByTeam: Record<string, Array<{ id: string; year: number; round: number; originalTeam: string }>>,
+  myDraftedPlayers: Array<{ prospectName: string; pos: string; overall: number }>,
+  targetTeamPicks: Record<string, Array<{ overall: number; round: number; roundPick: number; originalTeam: string }>>,
+  targetTeamRosters: Record<string, Array<{ name: string; pos: string }>>,
+  targetTeamFuturePicks: Record<string, Array<{ year: number; round: number; originalTeam: string }>>,
+  completedPicks: Array<{ overall: number; team: string; prospectName: string; pos: string }>,
 ): string {
-  const teamList = Object.entries(allTeams)
+  const teamList = Object.entries(TEAMS)
     .map(([abbr, t]) => `${abbr} = ${t.name}`)
     .join('\n');
 
+  // ── My team's full context ──
   const myPicksStr = myPicks.length > 0
     ? myPicks.map(p => `  #${p.overall} (Round ${p.round}, Pick ${p.roundPick}${p.originalTeam !== myTeam ? ` — via ${p.originalTeam}` : ''})`).join('\n')
     : '  (none)';
 
-  const myPlayersStr = myPlayers.length > 0
-    ? myPlayers.slice(0, 30).map(p => `  ${p.name} (${p.pos})`).join('\n')
+  const myRosterStr = myRoster.length > 0
+    ? myRoster.map(p => `  ${p.name} (${p.pos})`).join('\n')
     : '  (none)';
 
   const myFutureStr = myFuturePicks.length > 0
     ? myFuturePicks.map(f => `  ${f.year} Round ${f.round} (orig: ${f.originalTeam})`).join('\n')
     : '  (none)';
 
-  // Build other teams' picks summary (compact)
-  const otherTeamPicks = Object.entries(allPicksByTeam)
-    .filter(([abbr]) => abbr !== myTeam)
-    .map(([abbr, picks]) => {
-      const pickStr = picks.map(p => `#${p.overall}(R${p.round})`).join(', ');
-      return `  ${abbr}: ${pickStr || '(none)'}`;
+  const myDraftedStr = myDraftedPlayers.length > 0
+    ? myDraftedPlayers.map(p => `  #${p.overall}: ${p.prospectName} (${p.pos})`).join('\n')
+    : '  (none yet)';
+
+  // ── Other teams' context (picks + rosters) ──
+  const otherTeamsContext = Object.keys(TEAMS)
+    .filter(abbr => abbr !== myTeam)
+    .map(abbr => {
+      const name = TEAMS[abbr].name;
+      const picks = targetTeamPicks[abbr] ?? [];
+      const roster = targetTeamRosters[abbr] ?? [];
+      const futures = targetTeamFuturePicks[abbr] ?? [];
+
+      const picksStr = picks.length > 0
+        ? picks.map(p => `#${p.overall}(R${p.round}.${p.roundPick}${p.originalTeam !== abbr ? ` via ${p.originalTeam}` : ''})`).join(', ')
+        : '(none)';
+
+      // Show top 25 roster players to keep prompt manageable
+      const rosterStr = roster.length > 0
+        ? roster.slice(0, 25).map(p => `${p.name} (${p.pos})`).join(', ')
+        : '(none loaded)';
+
+      const futureStr = futures.length > 0
+        ? futures.map(f => `${f.year}R${f.round}`).join(', ')
+        : '';
+
+      let section = `### ${name} (${abbr})\n  Picks: ${picksStr}\n  Roster: ${rosterStr}`;
+      if (futureStr) section += `\n  Future picks: ${futureStr}`;
+      return section;
     })
-    .join('\n');
+    .join('\n\n');
+
+  // ── Recent draft activity ──
+  const recentPicksStr = completedPicks.length > 0
+    ? completedPicks.slice(-15).map(p => `  #${p.overall} ${p.team}: ${p.prospectName} (${p.pos})`).join('\n')
+    : '  (no picks made yet)';
 
   return `You are an NFL trade assistant for a mock draft Discord bot. Your job is to parse a natural-language trade description into structured trade data.
+
+You are a stateless agent — all the information you need is in this prompt.
 
 The user controls the **${myTeamName} (${myTeam})**.
 
 ## NFL Teams
 ${teamList}
 
-## ${myTeam}'s Available Draft Picks (current year)
+## MY TEAM: ${myTeamName} (${myTeam})
+
+### Available Draft Picks (current year)
 ${myPicksStr}
 
-## ${myTeam}'s Roster Players (tradeable)
-${myPlayersStr}
+### Roster Players (tradeable)
+${myRosterStr}
 
-## ${myTeam}'s Future Pick Rights
+### Future Pick Rights (2027-2028)
 ${myFutureStr}
 
-## Other Teams' Available Picks
-${otherTeamPicks}
+### Players Already Drafted This Session
+${myDraftedStr}
+
+## OTHER TEAMS
+
+${otherTeamsContext}
+
+## Recent Draft Picks
+${recentPicksStr}
 
 ## Rules
 - "offeredPicks" and "requestedPicks" use OVERALL pick numbers (not round.pick notation)
-- "offeredPlayers" and "requestedPlayers" use exact player names as shown above
+- "offeredPlayers" and "requestedPlayers" use exact player names as shown in the rosters above
 - "offeredFuturePicks" and "requestedFuturePicks" use format like "2027R1", "2028R3"
 - "offered" means what the user's team GIVES UP
 - "requested" means what the user's team RECEIVES
@@ -95,6 +140,7 @@ ${otherTeamPicks}
 - If you cannot determine the trade, set "error" to a helpful message explaining what's unclear
 - Match player names fuzzily — if they say "Mahomes" match to the full name "Patrick Mahomes" from the roster
 - Match team names fuzzily — "Cowboys" = "DAL", "Niners" or "49ers" = "SF", etc.
+- When the user references a player by position (e.g. "their QB"), look up the target team's roster to find the matching player
 
 ## Response Format
 Respond with ONLY valid JSON in this exact format:
@@ -139,7 +185,9 @@ export async function execute(
   await interaction.deferReply({ ephemeral: true });
 
   try {
-    // Gather context for the LLM
+    // ── Build fresh context snapshot ──
+
+    // My team's picks
     const myPicks = manager.getFuturePicksForTeam(userTeam).map(s => ({
       overall: s.overall,
       round: s.round,
@@ -147,7 +195,10 @@ export async function execute(
       originalTeam: s.originalTeam,
     }));
 
-    const myPlayers = manager.searchRosterPlayers(userTeam, '');
+    // My team's current roster
+    const myRoster = manager.searchRosterPlayers(userTeam, '');
+
+    // My team's future pick rights
     const myFuturePicks = manager.getFuturePickRightsForTeam(userTeam).map(f => ({
       id: f.id,
       year: f.year,
@@ -155,32 +206,53 @@ export async function execute(
       originalTeam: f.originalTeam,
     }));
 
-    // Build other teams' picks for reference
-    const allPicksByTeam: Record<string, Array<{ overall: number; round: number; roundPick: number }>> = {};
-    const allFuturePicksByTeam: Record<string, Array<{ id: string; year: number; round: number; originalTeam: string }>> = {};
+    // Players my team has already drafted
+    const myDraftedPlayers = manager.getTeamPicks(userTeam).map(p => ({
+      prospectName: p.prospectName,
+      pos: p.pos,
+      overall: p.overall,
+    }));
+
+    // All other teams' picks and rosters
+    const targetTeamPicks: Record<string, Array<{ overall: number; round: number; roundPick: number; originalTeam: string }>> = {};
+    const targetTeamRosters: Record<string, Array<{ name: string; pos: string }>> = {};
+    const targetTeamFuturePicks: Record<string, Array<{ year: number; round: number; originalTeam: string }>> = {};
+
     for (const abbr of Object.keys(TEAMS)) {
-      allPicksByTeam[abbr] = manager.getFuturePicksForTeam(abbr).map(s => ({
+      if (abbr === userTeam) continue;
+      targetTeamPicks[abbr] = manager.getFuturePicksForTeam(abbr).map(s => ({
         overall: s.overall,
         round: s.round,
         roundPick: s.roundPick,
+        originalTeam: s.originalTeam,
       }));
-      allFuturePicksByTeam[abbr] = manager.getFuturePickRightsForTeam(abbr).map(f => ({
-        id: f.id,
+      targetTeamRosters[abbr] = manager.searchRosterPlayers(abbr, '');
+      targetTeamFuturePicks[abbr] = manager.getFuturePickRightsForTeam(abbr).map(f => ({
         year: f.year,
         round: f.round,
         originalTeam: f.originalTeam,
       }));
     }
 
+    // Recent completed picks for draft context
+    const completedPicks = state.picks.map(p => ({
+      overall: p.overall,
+      team: p.team,
+      prospectName: p.prospectName,
+      pos: p.pos,
+    }));
+
     const systemPrompt = buildTradeSystemPrompt(
       userTeam,
       TEAMS[userTeam]?.name ?? userTeam,
       myPicks,
-      myPlayers,
+      myRoster,
       myFuturePicks,
-      TEAMS,
-      allPicksByTeam,
-      allFuturePicksByTeam,
+      myDraftedPlayers,
+      targetTeamPicks,
+      targetTeamRosters,
+      targetTeamFuturePicks,
+      completedPicks,
     );
 
     const result = await chatJSON<TradeAIResponse>(systemPrompt, description);

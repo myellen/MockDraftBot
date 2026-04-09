@@ -25,37 +25,61 @@ interface BoardAIResponse {
   error?: string;
 }
 
+/**
+ * Build a full context snapshot for the LLM board agent.
+ * Stateless agent — everything it needs is in this prompt.
+ */
 function buildBoardSystemPrompt(
   teamAbbr: string,
   teamName: string,
   availableProspects: Array<{ rank: number; name: string; pos: string; school: string }>,
   currentBoard: Array<{ rank: number; name: string; pos: string }>,
   currentPriority: string[],
+  currentRoster: Array<{ name: string; pos: string }>,
+  draftedPlayers: Array<{ prospectName: string; pos: string; overall: number }>,
 ): string {
   const prospectsStr = availableProspects
-    .slice(0, 80)
     .map(p => `  ${p.rank}. ${p.name} (${p.pos}, ${p.school})`)
     .join('\n');
 
   const boardStr = currentBoard.length > 0
-    ? currentBoard.slice(0, 40).map((p, i) => `  ${i + 1}. ${p.name} (${p.pos})`).join('\n')
+    ? currentBoard.map((p, i) => `  ${i + 1}. ${p.name} (${p.pos})`).join('\n')
     : '  (no custom board set)';
 
   const priorityStr = currentPriority.length > 0
     ? currentPriority.join(' → ')
     : '(none set)';
 
+  const rosterStr = currentRoster.length > 0
+    ? currentRoster.map(p => `  ${p.name} (${p.pos})`).join('\n')
+    : '  (none loaded)';
+
+  const draftedStr = draftedPlayers.length > 0
+    ? draftedPlayers.map(p => `  #${p.overall}: ${p.prospectName} (${p.pos})`).join('\n')
+    : '  (none yet)';
+
   const positionsList = ALL_POSITIONS.join(', ');
 
   return `You are an NFL draft board assistant for a mock draft Discord bot. Your job is to parse natural-language instructions about draft board changes into structured data.
 
+You are a stateless agent — all the information you need is in this prompt.
+
 The user controls the **${teamName} (${teamAbbr})**.
 
+## Current Roster
+These are the players already on the team's NFL roster (before the draft):
+${rosterStr}
+
+## Players Already Drafted This Session
+These picks have already been made for this team in the current draft:
+${draftedStr}
+
 ## Available Prospects (by overall rank)
+These are the prospects still available to be drafted:
 ${prospectsStr}
-${availableProspects.length > 80 ? `  ... and ${availableProspects.length - 80} more` : ''}
 
 ## Current Custom Board
+This is the team's current custom draft board (autopick order):
 ${boardStr}
 
 ## Current Position Priority
@@ -68,14 +92,16 @@ ${positionsList}
 
 ### 1. submit_board
 Set a custom draft board — an ordered list of prospect NAMES. When autopick fires, it picks the highest-ranked available player on this board.
-- The board should contain player names EXACTLY as they appear in the prospects list above.
+- The board should contain player names EXACTLY as they appear in the "Available Prospects" list above.
 - If the user wants to reorder, add, or remove players, return the full updated board.
 - If the user says "prioritize WRs" without other context and they have no board, create a board that puts WR prospects first, then other positions by rank.
+- When the user says "draft for need" or "fill roster holes", look at their current roster and drafted players to identify weak positions, then build a board that prioritizes those positions.
 
 ### 2. set_priority
 Set a position priority list for autopick fallback. This is used when the custom board runs out.
 - Return an array of position abbreviations in priority order.
 - Example: ["QB", "OT", "EDGE", "CB"]
+- When the user asks to "draft for need", analyze the roster to determine which positions need reinforcement.
 
 ### 3. clear
 Clear the custom board, position priority, or both.
@@ -129,8 +155,10 @@ export async function execute(
   await interaction.deferReply({ ephemeral: true });
 
   try {
-    // Gather context
-    const { prospects: availableProspects } = manager.getAvailableProspects(undefined, 1, 200);
+    // ── Build fresh context snapshot ──
+
+    // All available prospects (full list for the board)
+    const { prospects: availableProspects } = manager.getAvailableProspects(undefined, 1, 500);
     const prospectData = availableProspects.map(p => ({
       rank: p.rank,
       name: p.name,
@@ -138,6 +166,7 @@ export async function execute(
       school: p.school,
     }));
 
+    // Current custom board
     const boardRanks = manager.getCustomBoard(userTeam);
     const currentBoard = boardRanks.map(rank => {
       const prospect = availableProspects.find(p => p.rank === rank);
@@ -146,7 +175,18 @@ export async function execute(
         : { rank, name: `#${rank}`, pos: '?' };
     });
 
+    // Current position priority
     const currentPriority = manager.getPositionPriority(userTeam);
+
+    // Current NFL roster (so LLM can identify needs)
+    const currentRoster = manager.searchRosterPlayers(userTeam, '');
+
+    // Players already drafted this session
+    const draftedPlayers = manager.getTeamPicks(userTeam).map(p => ({
+      prospectName: p.prospectName,
+      pos: p.pos,
+      overall: p.overall,
+    }));
 
     const systemPrompt = buildBoardSystemPrompt(
       userTeam,
@@ -154,6 +194,8 @@ export async function execute(
       prospectData,
       currentBoard,
       currentPriority,
+      currentRoster,
+      draftedPlayers,
     );
 
     const result = await chatJSON<BoardAIResponse>(systemPrompt, description);
