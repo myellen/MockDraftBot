@@ -1,6 +1,4 @@
-import { PlayerSalary } from '../draft/types';
-
-// 2026 NFL salary cap (estimated) in thousands of dollars
+// 2026 NFL salary cap in thousands of dollars
 export const SALARY_CAP = 301200;
 
 // Rookie minimum salary in thousands (used for Rule of 51 / pick cap impact)
@@ -33,19 +31,3 @@ export function getRookieCapHit(overall: number): number {
   if (overall <= ROOKIE_CAP_HITS.length) return ROOKIE_CAP_HITS[overall - 1];
   return 1000;
 }
-
-// Generated via: npx ts-node scripts/generate-salaries.ts
-// Source: Spotrac / OverTheCap + trade machine overrides
-// Example shows structure only — run the generator for full data
-export const SALARIES: Record<string, Record<string, PlayerSalary>> = {
-  BUF: {
-    "josh allen": { capHit: 46440, deadMoney: 97907, baseSalary: 16440 },
-    "ed oliver": { capHit: 17400, deadMoney: 9967, baseSalary: 9400 },
-    "khalil shakir": { capHit: 4824, deadMoney: 3627, baseSalary: 1197 },
-  },
-  DAL: {
-    "dak prescott": { capHit: 89190, deadMoney: 128190, baseSalary: 1800 },
-    "george pickens": { capHit: 27298, deadMoney: 0, baseSalary: 27298 },
-    "ceedee lamb": { capHit: 26800, deadMoney: 22800, baseSalary: 14800 },
-  },
-};

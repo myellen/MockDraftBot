@@ -5,7 +5,7 @@ import {
 } from 'discord.js';
 import { DraftManager, formatCapAmount } from '../draft/DraftManager';
 import { TEAMS } from '../data/teams';
-import { SALARIES } from '../data/salaries';
+import { TEAM_CAP } from '../data/capData';
 
 const POS_GROUPS: Array<{ label: string; positions: string[] }> = [
   { label: 'QB',    positions: ['QB'] },
@@ -79,7 +79,7 @@ export async function execute(
   if (!futureText) futureText = '_None_';
 
   // ── Salary Cap ─────────────────────────────────────────────────────────────
-  const hasSalaryData = Object.keys(SALARIES).length > 0;
+  const hasSalaryData = Object.keys(TEAM_CAP).length > 0;
   let capText = '';
   if (hasSalaryData) {
     const capInfo = manager.trades.getTeamCapInfo(teamAbbr);

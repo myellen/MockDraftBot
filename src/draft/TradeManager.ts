@@ -1,10 +1,10 @@
 import { EmbedBuilder } from 'discord.js';
 import {
-  DraftState, PendingTrade, CancelledTrade, PlayerSalary, TeamCapInfo, TradeCancelReason,
+  DraftState, PendingTrade, CancelledTrade, TeamCapInfo, TradeCancelReason,
 } from './types';
 import { TEAMS } from '../data/teams';
-import { ROSTERS } from '../data/rosters';
-import { SALARIES, SALARY_CAP, ROOKIE_MINIMUM, getRookieCapHit } from '../data/salaries';
+import { TEAM_CAP, TRADE_PLAYERS, TradePlayerValues } from '../data/capData';
+import { SALARY_CAP, ROOKIE_MINIMUM, getRookieCapHit } from '../data/salaries';
 import { buildTradeExecutedEmbed } from '../utils/embeds';
 
 // ─── Host interface ──────────────────────────────────────────────────────────
@@ -52,99 +52,90 @@ export class TradeManager {
   // ─── Salary Cap ───────────────────────────────────────────────────────────
 
   /**
-   * Look up the salary data for a player on a given team.
-   * Checks the team's salary table first, then searches all teams if traded.
+   * Look up trade values for a player. Searches all teams in TRADE_PLAYERS.
+   * Returns the values and the team abbreviation the player is keyed under.
    */
-  getPlayerSalary(playerName: string, teamAbbr: string): PlayerSalary | null {
+  private getTradePlayerValues(playerName: string): { values: TradePlayerValues; origTeam: string } | null {
     const key = playerName.toLowerCase();
-    const teamSalaries = SALARIES[teamAbbr];
-    if (teamSalaries?.[key]) return teamSalaries[key];
-    for (const [, salaries] of Object.entries(SALARIES)) {
-      if (salaries[key]) return salaries[key];
+    for (const [abbr, players] of Object.entries(TRADE_PLAYERS)) {
+      if (players[key]) return { values: players[key], origTeam: abbr };
     }
     return null;
   }
 
   /**
-   * Find the original team a player belongs to in the base SALARIES data.
-   */
-  private getPlayerOriginalSalaryTeam(playerName: string): string | null {
-    const key = playerName.toLowerCase();
-    for (const [abbr, salaries] of Object.entries(SALARIES)) {
-      if (salaries[key]) return abbr;
-    }
-    return null;
-  }
-
-  /**
-   * Compute a team's current salary cap situation, accounting for trades and draft picks.
+   * Compute a team's current salary cap situation.
+   * Starts from the pre-draft team cap space (from OTC) and adjusts for
+   * in-draft trades and rookie picks.
    */
   getTeamCapInfo(teamAbbr: string): TeamCapInfo {
-    let deadMoney = 0;
-    const activeCharges: number[] = [];
+    const baseline = TEAM_CAP[teamAbbr];
+    if (!baseline) {
+      return { capUsed: 0, capSpace: 0, deadMoney: 0, projectedRookieCap: 0, effectiveCapSpace: 0 };
+    }
 
-    const teamSalaries = SALARIES[teamAbbr] ?? {};
-    const baseRoster = ROSTERS[teamAbbr] ?? [];
+    let capSpaceAdj = baseline.capSpace;
+    let deadMoney = baseline.deadMoney;
 
-    // 1. Process original roster players
-    const rosterNames = new Set(baseRoster.map(p => p.name.toLowerCase()));
-    for (const player of baseRoster) {
-      const key = player.name.toLowerCase();
-      const salary = teamSalaries[key];
-      if (!salary) continue;
+    // 1. Adjust for in-draft trades (iterate trade history)
+    for (const trade of this.state.tradeHistory) {
+      // Players this team SENT away
+      const sentPlayers = trade.proposerTeam === teamAbbr ? trade.offeredPlayers
+        : trade.receiverTeam === teamAbbr ? trade.requestedPlayers : [];
+      for (const name of sentPlayers) {
+        const pv = this.getTradePlayerValues(name.toLowerCase());
+        if (!pv) continue;
+        if (pv.origTeam === teamAbbr) {
+          // Original team sends player: shed capHit, keep deadCap
+          capSpaceAdj += pv.values.capHit - pv.values.deadCap;
+          deadMoney += pv.values.deadCap;
+        } else {
+          // Re-trading a player acquired via trade: shed incomingCap
+          capSpaceAdj += pv.values.incomingCap;
+        }
+      }
 
-      const tradedTo = this.state.playerOwnership[key];
-      if (tradedTo !== undefined && tradedTo !== teamAbbr) {
-        deadMoney += salary.tradeDeadCap ?? salary.deadMoney;
-      } else {
-        activeCharges.push(salary.capHit);
+      // Players this team RECEIVED
+      const recvPlayers = trade.proposerTeam === teamAbbr ? trade.requestedPlayers
+        : trade.receiverTeam === teamAbbr ? trade.offeredPlayers : [];
+      for (const name of recvPlayers) {
+        const pv = this.getTradePlayerValues(name.toLowerCase());
+        if (!pv) continue;
+        capSpaceAdj -= pv.values.incomingCap;
+      }
+
+      // Draft picks traded (rookie slot obligation follows the pick)
+      const sentPicks = trade.proposerTeam === teamAbbr ? trade.offeredOveralls
+        : trade.receiverTeam === teamAbbr ? trade.requestedOveralls : [];
+      for (const overall of sentPicks) {
+        capSpaceAdj += Math.max(0, getRookieCapHit(overall) - ROOKIE_MINIMUM);
+      }
+      const recvPicks = trade.proposerTeam === teamAbbr ? trade.requestedOveralls
+        : trade.receiverTeam === teamAbbr ? trade.offeredOveralls : [];
+      for (const overall of recvPicks) {
+        capSpaceAdj -= Math.max(0, getRookieCapHit(overall) - ROOKIE_MINIMUM);
       }
     }
 
-    // 1b. Dead money from players NOT on the roster (voided/released/traded pre-draft)
-    for (const [key, salary] of Object.entries(teamSalaries)) {
-      if (rosterNames.has(key)) continue;
-      deadMoney += salary.deadMoney;
-    }
-
-    // 2. Add players traded IN from other teams
-    for (const [nameLower, ownerTeam] of Object.entries(this.state.playerOwnership)) {
-      if (ownerTeam !== teamAbbr) continue;
-      if (baseRoster.some(p => p.name.toLowerCase() === nameLower)) continue;
-
-      const origTeam = this.getPlayerOriginalSalaryTeam(nameLower);
-      if (!origTeam) continue;
-      const origSalary = SALARIES[origTeam]?.[nameLower];
-      if (!origSalary) continue;
-      activeCharges.push(origSalary.tradeIncomingCap ?? origSalary.baseSalary);
-    }
-
-    // 3. Add rookie cap hits for drafted players on this team
+    // 2. Subtract rookie cap hits for players already drafted by this team
     for (const pick of this.state.picks) {
       if (pick.team === teamAbbr) {
-        activeCharges.push(getRookieCapHit(pick.overall));
+        capSpaceAdj -= getRookieCapHit(pick.overall);
       }
     }
 
-    // 4. Project undrafted picks this team owns (future rookie slot obligations)
-    //    Per CBA Rule of 51: rookies are initially reserved at the minimum salary,
-    //    so the NET cap impact of each pick = rookieSlotValue - minimum.
+    // 3. Project undrafted picks this team owns (future rookie slot obligations)
     let projectedRookieCap = 0;
     const futurePicks = this.state.schedule.slice(this.state.currentPickIndex);
     for (const slot of futurePicks) {
       if (slot.currentTeam === teamAbbr) {
-        const rookieCost = getRookieCapHit(slot.overall);
-        const netCost = Math.max(0, rookieCost - ROOKIE_MINIMUM);
+        const netCost = Math.max(0, getRookieCapHit(slot.overall) - ROOKIE_MINIMUM);
         projectedRookieCap += netCost;
       }
     }
 
-    // Top 51: sort descending, take the 51 highest active charges
-    activeCharges.sort((a, b) => b - a);
-    const top51Total = activeCharges.slice(0, 51).reduce((sum, c) => sum + c, 0);
-
-    const capUsed = top51Total + deadMoney;
-    const capSpace = SALARY_CAP - capUsed;
+    const capSpace = capSpaceAdj;
+    const capUsed = SALARY_CAP - capSpace;
 
     return {
       capUsed,
@@ -158,9 +149,6 @@ export class TradeManager {
   /**
    * Calculate the cap impact of a trade for both teams BEFORE execution.
    * Returns the cap space change for each team (negative = less space).
-   *
-   * Per CBA Art. 13 Sec. 6(f): new team takes on baseSalary (no signing bonus proration).
-   * Per CBA Art. 7 Sec. 3(j): draft pick trades transfer the rookie slot obligation.
    */
   calculateTradeCapImpact(trade: PendingTrade): {
     proposerCapChange: number;
@@ -178,64 +166,44 @@ export class TradeManager {
 
     // Players proposer sends to receiver
     for (const name of trade.offeredPlayers) {
-      const origTeam = this.getPlayerOriginalSalaryTeam(name.toLowerCase());
-      if (!origTeam) continue;
-      const salary = SALARIES[origTeam]?.[name.toLowerCase()];
-      if (!salary) continue;
+      const pv = this.getTradePlayerValues(name.toLowerCase());
+      if (!pv) continue;
 
-      const wasOriginallyOnProposer = origTeam === trade.proposerTeam;
-
-      const deadCap = salary.tradeDeadCap ?? salary.deadMoney;
-      const incomingCap = salary.tradeIncomingCap ?? salary.baseSalary;
-
-      if (wasOriginallyOnProposer) {
-        // Sender loses the capHit, keeps deadMoney; receiver takes on incoming cap
-        proposerCapDelta += deadCap - salary.capHit;
-        receiverCapDelta -= incomingCap;
+      if (pv.origTeam === trade.proposerTeam) {
+        // Sender loses capHit, keeps deadCap; receiver takes on incomingCap
+        proposerCapDelta += pv.values.capHit - pv.values.deadCap;
+        receiverCapDelta -= pv.values.incomingCap;
       } else {
-        // Player was traded to proposer previously — transferable is incoming cap
-        proposerCapDelta += incomingCap;
-        receiverCapDelta -= incomingCap;
+        // Player was traded to proposer previously — shed incomingCap
+        proposerCapDelta += pv.values.incomingCap;
+        receiverCapDelta -= pv.values.incomingCap;
       }
     }
 
     // Players receiver sends to proposer
     for (const name of trade.requestedPlayers) {
-      const origTeam = this.getPlayerOriginalSalaryTeam(name.toLowerCase());
-      if (!origTeam) continue;
-      const salary = SALARIES[origTeam]?.[name.toLowerCase()];
-      if (!salary) continue;
+      const pv = this.getTradePlayerValues(name.toLowerCase());
+      if (!pv) continue;
 
-      const wasOriginallyOnReceiver = origTeam === trade.receiverTeam;
-      const deadCap = salary.tradeDeadCap ?? salary.deadMoney;
-      const incomingCap = salary.tradeIncomingCap ?? salary.baseSalary;
-
-      if (wasOriginallyOnReceiver) {
-        // Sender loses the capHit, keeps deadMoney; receiver takes on incoming cap
-        receiverCapDelta += deadCap - salary.capHit;
-        proposerCapDelta -= incomingCap;
+      if (pv.origTeam === trade.receiverTeam) {
+        receiverCapDelta += pv.values.capHit - pv.values.deadCap;
+        proposerCapDelta -= pv.values.incomingCap;
       } else {
-        // Player was traded to receiver previously
-        receiverCapDelta += incomingCap;
-        proposerCapDelta -= incomingCap;
+        receiverCapDelta += pv.values.incomingCap;
+        proposerCapDelta -= pv.values.incomingCap;
       }
     }
 
     // ── Draft pick cap impact ─────────────────────────────────────────────────
-    // Per CBA Art. 7 Sec. 3(j): rookie slot obligation follows the pick.
-    // Under Rule of 51, each pick is already reserved at ROOKIE_MINIMUM,
-    // so the net cap delta is (rookieSlotValue - ROOKIE_MINIMUM).
-
     for (const overall of trade.offeredOveralls) {
       const netSlot = Math.max(0, getRookieCapHit(overall) - ROOKIE_MINIMUM);
-      proposerCapDelta += netSlot;   // proposer sheds this obligation
-      receiverCapDelta -= netSlot;   // receiver absorbs it
+      proposerCapDelta += netSlot;
+      receiverCapDelta -= netSlot;
     }
-
     for (const overall of trade.requestedOveralls) {
       const netSlot = Math.max(0, getRookieCapHit(overall) - ROOKIE_MINIMUM);
-      receiverCapDelta += netSlot;   // receiver sheds this obligation
-      proposerCapDelta -= netSlot;   // proposer absorbs it
+      receiverCapDelta += netSlot;
+      proposerCapDelta -= netSlot;
     }
 
     return {
@@ -248,9 +216,6 @@ export class TradeManager {
 
   /**
    * Validate that a trade would not put either team over the salary cap.
-   * Returns hard errors (cap exceeded) and soft warnings (dangerously low cap, high dead money).
-   * Hard errors only enforced when enforceSalaryCap is enabled in config.
-   * Warnings are always returned for informational display.
    */
   validateTradeCap(trade: PendingTrade): { valid: boolean; error?: string; warnings: string[] } {
     const warnings: string[] = [];
@@ -261,7 +226,6 @@ export class TradeManager {
 
     const impact = this.calculateTradeCapImpact(trade);
 
-    // Hard fail: over the cap (only enforced when enforceSalaryCap is on)
     if (this.state.config.enforceSalaryCap) {
       if (impact.proposerNewSpace < 0) {
         const over = Math.abs(impact.proposerNewSpace);
@@ -281,9 +245,8 @@ export class TradeManager {
       }
     }
 
-    // Soft warnings (always computed, even when cap enforcement is off)
-    const LOW_CAP_THRESHOLD = 3000; // $3M in thousands
-    const DEAD_MONEY_RATIO = 0.25;  // 25% of cap
+    const LOW_CAP_THRESHOLD = 3000;
+    const DEAD_MONEY_RATIO = 0.25;
 
     for (const [team, newSpace] of [
       [trade.proposerTeam, impact.proposerNewSpace],
@@ -296,14 +259,12 @@ export class TradeManager {
       }
 
       const capInfo = this.getTeamCapInfo(team);
-      // Estimate new dead money: existing dead + any dead money added by this trade
       let addedDead = 0;
       const sentPlayers = team === trade.proposerTeam ? trade.offeredPlayers : trade.requestedPlayers;
       for (const name of sentPlayers) {
-        const origTeam = this.getPlayerOriginalSalaryTeam(name.toLowerCase());
-        if (origTeam === team) {
-          const salary = SALARIES[origTeam]?.[name.toLowerCase()];
-          if (salary) addedDead += salary.tradeDeadCap ?? salary.deadMoney;
+        const pv = this.getTradePlayerValues(name.toLowerCase());
+        if (pv && pv.origTeam === team) {
+          addedDead += pv.values.deadCap;
         }
       }
       const projectedDead = capInfo.deadMoney + addedDead;

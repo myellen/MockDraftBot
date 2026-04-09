@@ -5,7 +5,7 @@ import {
 } from 'discord.js';
 import { DraftManager, formatCapAmount } from '../draft/DraftManager';
 import { TEAMS } from '../data/teams';
-import { SALARIES } from '../data/salaries';
+import { TEAM_CAP } from '../data/capData';
 import { isOllamaConfigured, chatJSON } from '../llm/OllamaService';
 
 export const data = new SlashCommandBuilder()
@@ -366,7 +366,7 @@ export async function execute(
 
     // Show cap impact if relevant
     let capText = '';
-    if (Object.keys(SALARIES).length > 0) {
+    if (Object.keys(TEAM_CAP).length > 0) {
       const impact = manager.trades.calculateTradeCapImpact(trade);
       const fmtDelta = (d: number) => d >= 0 ? `+$${formatCapAmount(d)}` : `-$${formatCapAmount(Math.abs(d))}`;
       capText = `\n**Cap Impact:**\n` +

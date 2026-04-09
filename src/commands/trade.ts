@@ -6,7 +6,7 @@ import {
 } from 'discord.js';
 import { DraftManager, formatCapAmount } from '../draft/DraftManager';
 import { TEAMS } from '../data/teams';
-import { SALARIES } from '../data/salaries';
+import { TEAM_CAP } from '../data/capData';
 import { buildPendingTradesEmbed, buildTradeExecutedEmbed } from '../utils/embeds';
 import { isAdmin } from '../utils/permissions';
 
@@ -290,7 +290,7 @@ export async function execute(
     };
 
     let capImpactText = '';
-    if (Object.keys(SALARIES).length > 0 && (offeredPlayers.length > 0 || requestedPlayers.length > 0 || offered.length > 0 || requested.length > 0)) {
+    if (Object.keys(TEAM_CAP).length > 0 && (offeredPlayers.length > 0 || requestedPlayers.length > 0 || offered.length > 0 || requested.length > 0)) {
       const impact = manager.trades.calculateTradeCapImpact(trade);
       const fmtDelta = (d: number) => d >= 0 ? `+$${formatCapAmount(d)}` : `-$${formatCapAmount(Math.abs(d))}`;
       capImpactText = `\n**Cap Impact:**\n` +
