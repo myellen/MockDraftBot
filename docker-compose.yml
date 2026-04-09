@@ -11,4 +11,8 @@ services:
       - OLLAMA_API_KEY=${OLLAMA_API_KEY}
     volumes:
       - ./data:/app/data   # persist draft state across restarts
+      - ./logs:/app/logs   # persist logs across rebuilds
+    command: >
+      sh -c "GUILD_ID= node build/deploy-commands.js &&
+             node build/index.js 2>&1 | tee -a /app/logs/bot.log"
     restart: unless-stopped

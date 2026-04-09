@@ -6,6 +6,7 @@ import {
 import { DraftManager, formatCapAmount } from '../draft/DraftManager';
 import { TEAMS } from '../data/teams';
 import { TEAM_CAP } from '../data/capData';
+import { buildTradeChartUrl } from '../utils/embeds';
 import { isOllamaConfigured, chatJSON } from '../llm/OllamaService';
 
 export const data = new SlashCommandBuilder()
@@ -380,11 +381,15 @@ export async function execute(
     }
 
     // Ephemeral confirmation to the proposer
+    const hasPicks = (result.offeredPicks?.length ?? 0) > 0 || (result.requestedPicks?.length ?? 0) > 0 ||
+      (result.offeredFuturePicks?.length ?? 0) > 0 || (result.requestedFuturePicks?.length ?? 0) > 0;
+    const chartLink = hasPicks ? `\n[Trade chart](${buildTradeChartUrl(trade, state.schedule)})` : '';
+
     await interaction.editReply(
       `✅ Trade proposal **[${trade.id}]** sent!\n` +
       `**${myTeamName}** send: ${formatSide(result.offeredPicks ?? [], result.offeredPlayers ?? [], result.offeredFuturePicks ?? [])}\n` +
       `**${targetTeamName}** send: ${formatSide(result.requestedPicks ?? [], result.requestedPlayers ?? [], result.requestedFuturePicks ?? [])}` +
-      capText + `\n\n` +
+      capText + chartLink + `\n\n` +
       `<@${receiverUserId}> — use \`/trade accept ${trade.id}\` to accept, or \`/trade decline ${trade.id}\` to decline.`
     );
 

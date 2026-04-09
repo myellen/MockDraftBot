@@ -107,6 +107,60 @@ export function buildMyBoardEmbed(
   return embed;
 }
 
+/**
+ * Estimate the overall pick number for a future-year pick based on the team's
+ * current-year draft position.
+ */
+function estimateFuturePickOverall(futurePickId: string, schedule: PickSlot[]): { year: number; overall: number } | null {
+  const m = futurePickId.match(/^(\d{4})-R(\d+)-(.+)$/);
+  if (!m) return null;
+  const year = parseInt(m[1], 10);
+  const round = parseInt(m[2], 10);
+  const origTeam = m[3];
+
+  // Find this team's original pick in the same round
+  const slot = schedule.find(s => s.originalTeam === origTeam && s.round === round);
+  if (slot) return { year, overall: slot.overall };
+
+  // Fallback: offset from their round 1 position
+  const r1Slot = schedule.find(s => s.originalTeam === origTeam && s.round === 1);
+  if (r1Slot) return { year, overall: (round - 1) * 32 + r1Slot.roundPick };
+
+  // Last resort: middle of the round
+  return { year, overall: (round - 1) * 32 + 16 };
+}
+
+/**
+ * Build a trade chart URL for a given trade.
+ * Format: https://kvatsaas.github.io/trade-charts/?teama=X&teamb=Y&a=YEAR.OVERALL&b=YEAR.OVERALL
+ */
+export function buildTradeChartUrl(trade: PendingTrade, schedule: PickSlot[]): string {
+  const params: string[] = [
+    `teama=${trade.proposerTeam.toLowerCase()}`,
+    `teamb=${trade.receiverTeam.toLowerCase()}`,
+  ];
+
+  // What proposer sends (a=)
+  for (const overall of trade.offeredOveralls) {
+    params.push(`a=2026.${overall}`);
+  }
+  for (const fpId of trade.offeredFuturePicks) {
+    const est = estimateFuturePickOverall(fpId, schedule);
+    if (est) params.push(`a=${est.year}.${est.overall}`);
+  }
+
+  // What receiver sends (b=)
+  for (const overall of trade.requestedOveralls) {
+    params.push(`b=2026.${overall}`);
+  }
+  for (const fpId of trade.requestedFuturePicks) {
+    const est = estimateFuturePickOverall(fpId, schedule);
+    if (est) params.push(`b=${est.year}.${est.overall}`);
+  }
+
+  return `https://kvatsaas.github.io/trade-charts/?${params.join('&')}`;
+}
+
 function formatPickList(overalls: number[], schedule: PickSlot[], teams: Record<string, Team>): string {
   return overalls.map(o => {
     const slot = schedule.find(s => s.overall === o);
@@ -137,6 +191,10 @@ export function buildTradeExecutedEmbed(
   const proposer = teams[trade.proposerTeam]?.name ?? trade.proposerTeam;
   const receiver = teams[trade.receiverTeam]?.name ?? trade.receiverTeam;
 
+  const hasPicks = trade.offeredOveralls.length > 0 || trade.requestedOveralls.length > 0 ||
+    trade.offeredFuturePicks.length > 0 || trade.requestedFuturePicks.length > 0;
+  const chartLink = hasPicks ? `\n[Trade chart](${buildTradeChartUrl(trade, schedule)})` : '';
+
   return new EmbedBuilder()
     .setColor(0x5865F2)
     .setTitle('🔄 Trade Executed!')
@@ -152,6 +210,7 @@ export function buildTradeExecutedEmbed(
         inline: true,
       },
     )
+    .setDescription(chartLink || null)
     .setTimestamp();
 }
 
@@ -190,7 +249,9 @@ export function buildPendingTradesEmbed(
         ...gettingPlayers,
         ...gettingFuture.map(id => formatFuturePickId(id)),
       ];
-      return `**[${t.id}]** ${role} → ${counterparty}\n  Give: ${giveParts.join(', ')} · Get: ${getParts.join(', ')}`;
+      const hasPicks = givingPicks.length > 0 || gettingPicks.length > 0 || givingFuture.length > 0 || gettingFuture.length > 0;
+      const chartLink = hasPicks ? `  [Trade chart](${buildTradeChartUrl(t, schedule)})` : '';
+      return `**[${t.id}]** ${role} → ${counterparty}\n  Give: ${giveParts.join(', ')} · Get: ${getParts.join(', ')}${chartLink}`;
     });
     embed.addFields({ name: `Pending Trades (${trades.length})`, value: lines.join('\n'), inline: false });
   }

@@ -7,7 +7,7 @@ import {
 import { DraftManager, formatCapAmount } from '../draft/DraftManager';
 import { TEAMS } from '../data/teams';
 import { TEAM_CAP } from '../data/capData';
-import { buildPendingTradesEmbed, buildTradeExecutedEmbed } from '../utils/embeds';
+import { buildPendingTradesEmbed, buildTradeExecutedEmbed, buildTradeChartUrl } from '../utils/embeds';
 import { isAdmin } from '../utils/permissions';
 
 export const data = new SlashCommandBuilder()
@@ -304,11 +304,14 @@ export async function execute(
       }
     }
 
+    const hasPicks = offered.length > 0 || requested.length > 0 || offeredFuture.length > 0 || requestedFuture.length > 0;
+    const chartLink = hasPicks ? `\n[Trade chart](${buildTradeChartUrl(trade, manager.getState().schedule)})` : '';
+
     await interaction.editReply(
       `✅ Trade proposal **[${trade.id}]** sent!\n` +
       `**${proposerTeamName}** send: ${formatSide(offered, offeredPlayers, offeredFuture)}\n` +
       `**${receiverTeamName}** send: ${formatSide(requested, requestedPlayers, requestedFuture)}` +
-      capImpactText + `\n\n` +
+      capImpactText + chartLink + `\n\n` +
       `${toUser} — use \`/trade accept ${trade.id}\` to accept, or \`/trade decline ${trade.id}\` to decline.`
     );
 

@@ -2,6 +2,7 @@ import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder } from '
 import { DraftManager } from '../draft/DraftManager';
 import { TEAMS } from '../data/teams';
 import { TEAM_EMOJI } from '../utils/teamEmoji';
+import { buildTradeChartUrl } from '../utils/embeds';
 import { PendingTrade, PickSlot } from '../draft/types';
 
 export const data = new SlashCommandBuilder()
@@ -48,7 +49,10 @@ export async function execute(
     const team1Gets = formatSide(t.requestedOveralls, t.requestedPlayers, t.requestedFuturePicks, slotMap);
     const team2Gets = formatSide(t.offeredOveralls, t.offeredPlayers, t.offeredFuturePicks, slotMap);
 
-    return `**${i + 1}.** ${e1} **${name1}**${gm1} receive: ${team1Gets}\n\u2003\u2003${e2} **${name2}**${gm2} receive: ${team2Gets}`;
+    const hasPicks = t.offeredOveralls.length > 0 || t.requestedOveralls.length > 0 ||
+      t.offeredFuturePicks.length > 0 || t.requestedFuturePicks.length > 0;
+    const chartLink = hasPicks ? `  [Trade chart](${buildTradeChartUrl(t, schedule)})` : '';
+    return `**${i + 1}.** ${e1} **${name1}**${gm1} receive: ${team1Gets}\n\u2003\u2003${e2} **${name2}**${gm2} receive: ${team2Gets}${chartLink}`;
   });
 
   const description = lines.join('\n\n');
@@ -147,7 +151,33 @@ export async function execute(
     .setTitle('🎯 Trade Hit Rate')
     .setDescription(hitRateLines.join('\n'));
 
-  // Send trade history embeds first (reply), then leaderboards (followUp)
-  await interaction.reply({ embeds: embeds.slice(0, 10) });
+  // Send trade history embeds, splitting across messages to stay under 6000 char limit
+  let batch: EmbedBuilder[] = [];
+  let batchSize = 0;
+  let isFirst = true;
+
+  for (const embed of embeds) {
+    const embedSize = (embed.data.description?.length ?? 0) + (embed.data.title?.length ?? 0) + 100;
+    if (batchSize + embedSize > 5800 && batch.length > 0) {
+      if (isFirst) {
+        await interaction.reply({ embeds: batch });
+        isFirst = false;
+      } else {
+        await interaction.followUp({ embeds: batch });
+      }
+      batch = [];
+      batchSize = 0;
+    }
+    batch.push(embed);
+    batchSize += embedSize;
+  }
+  if (batch.length > 0) {
+    if (isFirst) {
+      await interaction.reply({ embeds: batch });
+      isFirst = false;
+    } else {
+      await interaction.followUp({ embeds: batch });
+    }
+  }
   await interaction.followUp({ embeds: [leaderboard, hitRateEmbed] });
 }
