@@ -6,6 +6,7 @@ import { DraftManager } from '../draft/DraftManager';
 import { TEAMS } from '../data/teams';
 import { ALL_POSITIONS } from '../data/prospects';
 import { isOllamaConfigured, chatJSON } from '../llm/OllamaService';
+import { buildMyBoardEmbed } from '../utils/embeds';
 
 export const data = new SlashCommandBuilder()
   .setName('board-ai')
@@ -37,7 +38,10 @@ function buildBoardSystemPrompt(
   currentPriority: string[],
   currentRoster: Array<{ name: string; pos: string }>,
   draftedPlayers: Array<{ prospectName: string; pos: string; overall: number }>,
+  remainingPicks: number,
+  strategyNotes: string[],
 ): string {
+  const defaultBoardSize = Math.max(10, remainingPicks * 2);
   const prospectsStr = availableProspects
     .map(p => `  ${p.rank}. ${p.name} (${p.pos}, ${p.school})`)
     .join('\n');
@@ -87,12 +91,17 @@ ${priorityStr}
 
 ## Valid Positions
 ${positionsList}
-
+${strategyNotes.length > 0 ? `
+## Recent GM Instructions (memory)
+These are the GM's recent board-ai requests, oldest first. Use them as context for their draft strategy — the current request takes priority over these.
+${strategyNotes.map((n, i) => `  ${i + 1}. "${n}"`).join('\n')}
+` : ''}
 ## Actions You Can Take
 
 ### 1. submit_board
 Set a custom draft board — an ordered list of prospect NAMES. When autopick fires, it picks the highest-ranked available player on this board.
-- The board should contain player names EXACTLY as they appear in the "Available Prospects" list above.
+- The board should contain player names EXACTLY as they appear in the "Available Prospects" list above. Return ONLY the name (e.g. "Caleb Downs"), NOT the position or school (e.g. NOT "Caleb Downs (S, Ohio State)").
+- The team has **${remainingPicks} picks remaining** in this draft. By default, return a board of about **${defaultBoardSize} players** — enough to cover their picks with some buffer. Only return more if the user explicitly asks for a longer board.
 - If the user wants to reorder, add, or remove players, return the full updated board.
 - If the user says "prioritize WRs" without other context and they have no board, create a board that puts WR prospects first, then other positions by rank.
 - When the user says "draft for need" or "fill roster holes", look at their current roster and drafted players to identify weak positions, then build a board that prioritizes those positions.
@@ -154,7 +163,10 @@ export async function execute(
   const description = interaction.options.getString('description', true);
   await interaction.deferReply({ ephemeral: true });
 
+  let systemPrompt = '';
   try {
+    console.log(`[board-ai] User=${interaction.user.tag} Team=${userTeam} Input="${description}"`);
+
     // ── Build fresh context snapshot ──
 
     // All available prospects (full list for the board)
@@ -188,7 +200,10 @@ export async function execute(
       overall: p.overall,
     }));
 
-    const systemPrompt = buildBoardSystemPrompt(
+    const remainingPicks = manager.getFuturePicksForTeam(userTeam).length;
+    const strategyNotes = manager.getStrategyNotes(userTeam);
+
+    systemPrompt = buildBoardSystemPrompt(
       userTeam,
       TEAMS[userTeam]?.name ?? userTeam,
       prospectData,
@@ -196,9 +211,17 @@ export async function execute(
       currentPriority,
       currentRoster,
       draftedPlayers,
+      remainingPicks,
+      strategyNotes,
     );
 
+    // Save this input as a strategy note for future context
+    manager.addStrategyNote(userTeam, description, 10);
+
+    console.log(`[board-ai] Prompt length: ${systemPrompt.length} chars, ~${Math.ceil(systemPrompt.length / 4)} tokens`);
+
     const result = await chatJSON<BoardAIResponse>(systemPrompt, description);
+    console.log(`[board-ai] LLM response: action=${result.action}, board=${result.board?.length ?? 0} names, error=${result.error ?? 'none'}`);
 
     if (result.error) {
       await interaction.editReply(`❌ AI couldn't parse your request: ${result.error}`);
@@ -215,6 +238,7 @@ export async function execute(
       }
 
       const { matched, unmatched } = manager.submitBoard(userTeam, names);
+      console.log(`[board-ai] submitBoard: matched=${matched}, unmatched=${unmatched.length}${unmatched.length > 0 ? ' [' + unmatched.join(', ') + ']' : ''}`);
 
       let reply = `✅ **AI Board Update for ${teamName}**\n`;
       reply += `> ${result.explanation}\n\n`;
@@ -226,8 +250,12 @@ export async function execute(
         reply += `\n\n**${unmatched.length} unrecognized name${unmatched.length !== 1 ? 's' : ''} (skipped):**\n${shown}${extra}`;
       }
 
-      reply += `\n\nUse \`/board myboard\` to review your updated board.`;
-      await interaction.editReply(reply);
+      // Show the board inline
+      const { entries, total, totalPages, page } = manager.getMyBoardPage(userTeam, 1);
+      const priority = manager.getPositionPriority(userTeam);
+      const embed = buildMyBoardEmbed(teamName, entries, page, totalPages, total, priority);
+
+      await interaction.editReply({ content: reply, embeds: [embed] });
       return;
     }
 
@@ -275,10 +303,12 @@ export async function execute(
     const message = err instanceof Error ? err.message : String(err);
     if (message.includes('ECONNREFUSED') || message.includes('fetch failed')) {
       await interaction.editReply('❌ Could not connect to Ollama. Make sure the Ollama server is running and `OLLAMA_HOST` is correct.');
-    } else if (message.includes('JSON')) {
-      await interaction.editReply('❌ AI returned an invalid response. Try rephrasing your board description.');
     } else {
-      await interaction.editReply(`❌ AI error: ${message}`);
+      const truncMsg = message.slice(0, 1800);
+      await interaction.editReply(`❌ AI error: ${truncMsg}`);
+      // Log full prompt for debugging
+      console.error('[board-ai] Error:', message);
+      console.error('[board-ai] System prompt sent:', systemPrompt.slice(0, 2000), '...');
     }
   }
 }

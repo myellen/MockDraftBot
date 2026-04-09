@@ -5,6 +5,10 @@ services:
       - DISCORD_TOKEN=${DISCORD_TOKEN}
       - CLIENT_ID=${CLIENT_ID}
       - GUILD_ID=${GUILD_ID}
+      - SUPER_ADMINS=${SUPER_ADMINS}
+      - OLLAMA_HOST=${OLLAMA_HOST}
+      - OLLAMA_MODEL=${OLLAMA_MODEL}
+      - OLLAMA_API_KEY=${OLLAMA_API_KEY}
     volumes:
       - ./data:/app/data   # persist draft state across restarts
     restart: unless-stopped

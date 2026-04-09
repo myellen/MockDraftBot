@@ -1,6 +1,7 @@
 import {
   SlashCommandBuilder,
   ChatInputCommandInteraction,
+  EmbedBuilder,
 } from 'discord.js';
 import { DraftManager, formatCapAmount } from '../draft/DraftManager';
 import { TEAMS } from '../data/teams';
@@ -78,9 +79,8 @@ function buildTradeSystemPrompt(
         ? picks.map(p => `#${p.overall}(R${p.round}.${p.roundPick}${p.originalTeam !== abbr ? ` via ${p.originalTeam}` : ''})`).join(', ')
         : '(none)';
 
-      // Show top 25 roster players to keep prompt manageable
       const rosterStr = roster.length > 0
-        ? roster.slice(0, 25).map(p => `${p.name} (${p.pos})`).join(', ')
+        ? roster.map(p => `${p.name} (${p.pos})`).join(', ')
         : '(none loaded)';
 
       const futureStr = futures.length > 0
@@ -129,9 +129,11 @@ ${otherTeamsContext}
 ${recentPicksStr}
 
 ## Rules
-- "offeredPicks" and "requestedPicks" use OVERALL pick numbers (not round.pick notation)
+- This is the **2026 NFL Draft**. The picks listed under "Available Draft Picks (current year)" are 2026 picks.
+- When the user says "first round pick", "2026 first", "my 1st rounder", etc., they mean a CURRENT YEAR pick — find the matching pick by round from the "Available Draft Picks" lists and use its OVERALL number in "offeredPicks" or "requestedPicks".
+- "offeredPicks" and "requestedPicks" use OVERALL pick numbers (not round.pick notation) — these are for current-year (2026) picks ONLY.
+- "offeredFuturePicks" and "requestedFuturePicks" are for picks in FUTURE years (2027, 2028) ONLY — use format like "2027R1", "2028R3". NEVER put 2026 picks here.
 - "offeredPlayers" and "requestedPlayers" use exact player names as shown in the rosters above
-- "offeredFuturePicks" and "requestedFuturePicks" use format like "2027R1", "2028R3"
 - "offered" means what the user's team GIVES UP
 - "requested" means what the user's team RECEIVES
 - "targetTeam" is the OTHER team's abbreviation (e.g. "DAL", "NYJ")
@@ -184,7 +186,10 @@ export async function execute(
   const description = interaction.options.getString('description', true);
   await interaction.deferReply({ ephemeral: true });
 
+  let systemPrompt = '';
   try {
+    console.log(`[trade-ai] User=${interaction.user.tag} Team=${userTeam} Input="${description}"`);
+
     // ── Build fresh context snapshot ──
 
     // My team's picks
@@ -242,7 +247,7 @@ export async function execute(
       pos: p.pos,
     }));
 
-    const systemPrompt = buildTradeSystemPrompt(
+    systemPrompt = buildTradeSystemPrompt(
       userTeam,
       TEAMS[userTeam]?.name ?? userTeam,
       myPicks,
@@ -255,7 +260,10 @@ export async function execute(
       completedPicks,
     );
 
+    console.log(`[trade-ai] Prompt length: ${systemPrompt.length} chars, ~${Math.ceil(systemPrompt.length / 4)} tokens`);
+
     const result = await chatJSON<TradeAIResponse>(systemPrompt, description);
+    console.log(`[trade-ai] LLM response: target=${result.targetTeam}, offeredPicks=${JSON.stringify(result.offeredPicks)}, requestedPicks=${JSON.stringify(result.requestedPicks)}, offeredPlayers=${JSON.stringify(result.offeredPlayers)}, requestedPlayers=${JSON.stringify(result.requestedPlayers)}, error=${result.error ?? 'none'}`);
 
     if (result.error) {
       await interaction.editReply(`❌ AI couldn't parse your trade: ${result.error}`);
@@ -357,7 +365,9 @@ export async function execute(
     if (Object.keys(SALARIES).length > 0) {
       const impact = manager.trades.calculateTradeCapImpact(trade);
       const fmtDelta = (d: number) => d >= 0 ? `+$${formatCapAmount(d)}` : `-$${formatCapAmount(Math.abs(d))}`;
-      capText = `\n**Cap Impact:** ${myTeamName}: ${fmtDelta(impact.proposerCapChange)} | ${targetTeamName}: ${fmtDelta(impact.receiverCapChange)}`;
+      capText = `\n**Cap Impact:**\n` +
+        `${myTeamName}: ${fmtDelta(impact.proposerCapChange)} (eff. space: $${formatCapAmount(impact.proposerNewSpace)})\n` +
+        `${targetTeamName}: ${fmtDelta(impact.receiverCapChange)} (eff. space: $${formatCapAmount(impact.receiverNewSpace)})`;
 
       const capCheck = manager.trades.validateTradeCap(trade);
       if (capCheck.warnings.length > 0) {
@@ -365,19 +375,51 @@ export async function execute(
       }
     }
 
-    await interaction.followUp({
-      content: `✅ Trade proposed! (ID: **${trade.id}**)${capText}\n<@${receiverUserId}> can accept with \`/trade accept ${trade.id}\``,
-      ephemeral: false,
-    });
+    // Ephemeral confirmation to the proposer
+    await interaction.editReply(
+      `✅ Trade proposal **[${trade.id}]** sent!\n` +
+      `**${myTeamName}** send: ${formatSide(result.offeredPicks ?? [], result.offeredPlayers ?? [], result.offeredFuturePicks ?? [])}\n` +
+      `**${targetTeamName}** send: ${formatSide(result.requestedPicks ?? [], result.requestedPlayers ?? [], result.requestedFuturePicks ?? [])}` +
+      capText + `\n\n` +
+      `<@${receiverUserId}> — use \`/trade accept ${trade.id}\` to accept, or \`/trade decline ${trade.id}\` to decline.`
+    );
+
+    // Public announcement based on draft settings
+    const announcement = manager.getConfig().tradeAnnouncement;
+    if (announcement === 'public') {
+      await interaction.followUp({
+        content: `<@${receiverUserId}>`,
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0x5865F2)
+            .setTitle('🔄 Trade Proposed')
+            .setDescription(
+              `**${myTeamName}** send: ${formatSide(result.offeredPicks ?? [], result.offeredPlayers ?? [], result.offeredFuturePicks ?? [])}\n` +
+              `**${targetTeamName}** send: ${formatSide(result.requestedPicks ?? [], result.requestedPlayers ?? [], result.requestedFuturePicks ?? [])}`
+            )
+        ]
+      });
+    } else if (announcement === 'intrigue') {
+      await interaction.followUp({
+        content: `<@${receiverUserId}>`,
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0x5865F2)
+            .setTitle('📞 Incoming Trade Offer!')
+            .setDescription(`<@${receiverUserId}> has received a trade proposal. Check \`/trade list\` for details.`)
+        ]
+      });
+    }
 
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (message.includes('ECONNREFUSED') || message.includes('fetch failed')) {
       await interaction.editReply('❌ Could not connect to Ollama. Make sure the Ollama server is running and `OLLAMA_HOST` is correct.');
-    } else if (message.includes('JSON')) {
-      await interaction.editReply('❌ AI returned an invalid response. Try rephrasing your trade description.');
     } else {
-      await interaction.editReply(`❌ AI error: ${message}`);
+      const truncMsg = message.slice(0, 1800);
+      await interaction.editReply(`❌ AI error: ${truncMsg}`);
+      console.error('[trade-ai] Error:', message);
+      console.error('[trade-ai] System prompt sent:', systemPrompt.slice(0, 2000), '...');
     }
   }
 }

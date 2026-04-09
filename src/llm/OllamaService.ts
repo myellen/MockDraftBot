@@ -51,11 +51,19 @@ export async function chatJSON<T>(systemPrompt: string, userMessage: string): Pr
     format: 'json',
     options: {
       temperature: 0.3,
+      num_predict: 16384,
     },
   });
 
-  const text = response.message.content.trim();
-  return JSON.parse(text) as T;
+  let text = response.message.content.trim();
+  console.log('[OllamaService] chatJSON raw response:', text);
+  // Strip markdown code fences if the model wraps its JSON output
+  text = text.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?\s*```$/i, '').trim();
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(`Invalid JSON from LLM: ${text.slice(0, 500)}`);
+  }
 }
 
 /**
@@ -73,6 +81,7 @@ export async function chatText(systemPrompt: string, userMessage: string): Promi
     ],
     options: {
       temperature: 0.3,
+      num_predict: 16384,
     },
   });
 

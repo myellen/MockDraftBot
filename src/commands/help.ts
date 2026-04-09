@@ -88,7 +88,15 @@ export async function execute(
         inline: false,
       },
       {
-        name: '9️⃣ Co-Managers — `/draft add-comanager` · `/draft remove-comanager`',
+        name: '9️⃣ AI Draft Board — `/board-ai`',
+        value:
+          'Describe your draft strategy in plain English and let the AI build or adjust your board.\n' +
+          '> `/board-ai description:` — e.g. "prioritize edge rushers and corners" or "draft for need"\n' +
+          'The AI knows your roster, drafted players, and available prospects. It remembers your recent instructions across calls to refine your board over time.',
+        inline: false,
+      },
+      {
+        name: '🔟 Co-Managers — `/draft add-comanager` · `/draft remove-comanager`',
         value:
           'Add a trusted person to help manage your team. Co-managers can make picks and propose/accept trades.\n' +
           '> `/draft add-comanager user:@user` — add a co-manager to your team\n' +
@@ -96,7 +104,7 @@ export async function execute(
         inline: false,
       },
       {
-        name: '🔟 Draft Recap — `/recap`',
+        name: '1️⃣1️⃣ Draft Recap — `/recap`',
         value:
           'Get the link to the live draft recap spreadsheet.\n' +
           '> `/recap`',
@@ -143,6 +151,14 @@ export async function execute(
         name: 'Trade History — `/trade-history`',
         value:
           'View all completed trades in chronological order.',
+        inline: false,
+      },
+      {
+        name: 'AI Trade — `/trade-ai`',
+        value:
+          'Describe a trade in plain English and let the AI build and submit the proposal.\n' +
+          '> `/trade-ai description:` — e.g. "trade my 2nd rounder to the Cowboys for their 3rd and 5th"\n' +
+          'The AI knows every team\'s picks, rosters, and future pick rights. It will propose the trade and notify the other GM.',
         inline: false,
       },
       {
