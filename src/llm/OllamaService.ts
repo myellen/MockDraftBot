@@ -111,7 +111,7 @@ export async function chatJSONWithHistory<T>(
 /**
  * Send a chat completion request and return the raw text response.
  */
-export async function chatText(systemPrompt: string, userMessage: string): Promise<string> {
+export async function chatText(systemPrompt: string, userMessage: string, temperature = 0.3): Promise<string> {
   const client = getClient();
   const config = getConfig();
 
@@ -122,7 +122,7 @@ export async function chatText(systemPrompt: string, userMessage: string): Promi
       { role: 'user', content: userMessage },
     ],
     options: {
-      temperature: 0.3,
+      temperature,
       num_predict: 16384,
       num_ctx: config.numCtx,
     },

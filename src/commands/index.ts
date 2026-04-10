@@ -15,6 +15,7 @@ import * as recapCmd     from './recap';
 import * as tradeHistoryCmd from './trade-history';
 import * as tradeAiCmd      from './trade-ai';
 import * as boardAiCmd      from './board-ai';
+import * as rumorCmd        from './rumor';
 
 interface Command {
   data: { name: string; toJSON(): unknown };
@@ -37,6 +38,7 @@ export const commands: Command[] = [
   tradeHistoryCmd,
   tradeAiCmd,
   boardAiCmd,
+  rumorCmd,
 ];
 
 export const commandMap = new Map<string, Command>(
