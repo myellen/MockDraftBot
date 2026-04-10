@@ -43,8 +43,8 @@ export async function execute(
     const name1 = TEAMS[t.proposerTeam]?.name ?? t.proposerTeam;
     const name2 = TEAMS[t.receiverTeam]?.name ?? t.receiverTeam;
 
-    const gm1 = t.proposerUserId && t.proposerUserId !== 'admin' ? ` (<@${t.proposerUserId}>)` : '';
-    const gm2 = t.receiverUserId && t.receiverUserId !== 'admin' ? ` (<@${t.receiverUserId}>)` : '';
+    const gm1 = t.proposerUserId && t.proposerUserId !== 'admin' ? ` (${manager.resolveUserName(t.proposerUserId)})` : '';
+    const gm2 = t.receiverUserId && t.receiverUserId !== 'admin' ? ` (${manager.resolveUserName(t.receiverUserId)})` : '';
 
     const team1Gets = formatSide(t.requestedOveralls, t.requestedPlayers, t.requestedFuturePicks, slotMap);
     const team2Gets = formatSide(t.offeredOveralls, t.offeredPlayers, t.offeredFuturePicks, slotMap);
@@ -142,7 +142,7 @@ export async function execute(
     }
     const prefix = hitMedalIdx < 3 ? medals[hitMedalIdx] : `**${hitRank}.**`;
     const pct = Math.round(entry.rate * 100);
-    const gmTag = entry.gm ? ` (<@${entry.gm}>)` : '';
+    const gmTag = entry.gm ? ` (${manager.resolveUserName(entry.gm)})` : '';
     return `${prefix} ${entry.emoji} ${entry.name}${gmTag} — ${pct}% (${entry.accepted}/${entry.total})`;
   });
 
