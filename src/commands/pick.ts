@@ -71,16 +71,15 @@ export async function execute(
   const nextSlot = manager.getCurrentSlot();
   if (nextSlot) {
     const nextTeam = TEAMS[nextSlot.currentTeam];
-    const state = manager.getState();
-    const gmId = state.assignments[nextSlot.currentTeam];
-    const ping = gmId ? `<@${gmId}>` : 'No GM assigned';
+    const pings = manager.getTeamPings(nextSlot.currentTeam);
+    const gmLabel = manager.getTeamGMLabel(nextSlot.currentTeam);
     await interaction.followUp({
-      content: gmId ? `<@${gmId}>` : undefined,
+      content: pings,
       embeds: [
         new EmbedBuilder()
           .setColor(nextTeam?.color ?? 0xFFB612)
           .setTitle(`🏈 ${nextTeam?.name ?? nextSlot.currentTeam} are on the clock!`)
-          .setDescription(`${ping} — Round ${nextSlot.round}, Pick ${nextSlot.roundPick} · Overall #${nextSlot.overall}`)
+          .setDescription(`${gmLabel} — Round ${nextSlot.round}, Pick ${nextSlot.roundPick} · Overall #${nextSlot.overall}`)
       ]
     });
   }

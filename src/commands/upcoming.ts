@@ -36,8 +36,7 @@ export async function execute(
   const lines = upcoming.map((slot, i) => {
     const team = TEAMS[slot.currentTeam];
     const teamName = team?.name ?? slot.currentTeam;
-    const gmId = state.assignments[slot.currentTeam];
-    const gm = gmId ? `<@${gmId}>` : '_unassigned_';
+    const gm = manager.getTeamGMLabel(slot.currentTeam);
     const traded = slot.isTraded ? ' *(traded)*' : '';
     const emoji = TEAM_EMOJI[slot.currentTeam] ?? '⬜';
     const arrow = i === 0 ? '➡️ ' : '';

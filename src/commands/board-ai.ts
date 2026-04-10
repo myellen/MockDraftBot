@@ -15,6 +15,11 @@ export const data = new SlashCommandBuilder()
     .setName('description')
     .setDescription('e.g. "prioritize QBs and edge rushers" or "move Cam Ward to the top of my board"')
     .setRequired(true)
+  )
+  .addAttachmentOption(opt => opt
+    .setName('file')
+    .setDescription('Optional .txt or .csv file with player names / board data for the AI to process')
+    .setRequired(false)
   );
 
 interface BoardAIResponse {
@@ -100,7 +105,12 @@ ${strategyNotes.map((n, i) => `  ${i + 1}. "${n}"`).join('\n')}
 
 ### 1. submit_board
 Set a custom draft board — an ordered list of prospect NAMES. When autopick fires, it picks the highest-ranked available player on this board.
-- The board should contain player names EXACTLY as they appear in the "Available Prospects" list above. Return ONLY the name (e.g. "Caleb Downs"), NOT the position or school (e.g. NOT "Caleb Downs (S, Ohio State)").
+- CRITICAL: The board array must contain ONLY bare player names. NEVER include position, school, or parenthetical info.
+  ✅ CORRECT: "Caleb Downs"
+  ❌ WRONG: "Caleb Downs (S, Ohio State)"
+  ❌ WRONG: "Caleb Downs (S)"
+  ❌ WRONG: "Caleb Downs, S"
+- Names must match EXACTLY as they appear in the "Available Prospects" list above.
 - The team has **${remainingPicks} picks remaining** in this draft. By default, return a board of about **${defaultBoardSize} players** — enough to cover their picks with some buffer. Only return more if the user explicitly asks for a longer board.
 - If the user wants to reorder, add, or remove players, return the full updated board.
 - If the user says "prioritize WRs" without other context and they have no board, create a board that puts WR prospects first, then other positions by rank.
@@ -161,11 +171,35 @@ export async function execute(
   }
 
   const description = interaction.options.getString('description', true);
+  const attachment = interaction.options.getAttachment('file');
   await interaction.deferReply({ ephemeral: true });
+
+  // Fetch file content if provided
+  let fileContent = '';
+  if (attachment) {
+    if (!attachment.contentType?.startsWith('text') && !attachment.name?.match(/\.(txt|csv)$/i)) {
+      await interaction.editReply('❌ Please upload a `.txt` or `.csv` file.');
+      return;
+    }
+    if (attachment.size > 200_000) {
+      await interaction.editReply('❌ File too large (max 200 KB).');
+      return;
+    }
+    try {
+      const res = await fetch(attachment.url);
+      fileContent = await res.text();
+    } catch {
+      await interaction.editReply('❌ Failed to download the file. Please try again.');
+      return;
+    }
+  }
 
   let systemPrompt = '';
   try {
-    console.log(`[board-ai] User=${interaction.user.tag} Team=${userTeam} Input="${description}"`);
+    const userMessage = fileContent
+      ? `${description}\n\nFile content:\n${fileContent}`
+      : description;
+    console.log(`[board-ai] User=${interaction.user.tag} Team=${userTeam} Input="${description}"${fileContent ? ` File=${attachment!.name} (${fileContent.length} chars)` : ''}`);
 
     // ── Build fresh context snapshot ──
 
@@ -220,7 +254,31 @@ export async function execute(
 
     console.log(`[board-ai] Prompt length: ${systemPrompt.length} chars, ~${Math.ceil(systemPrompt.length / 4)} tokens`);
 
-    const result = await chatJSON<BoardAIResponse>(systemPrompt, description);
+    let result: BoardAIResponse;
+    try {
+      result = await chatJSON<BoardAIResponse>(systemPrompt, userMessage);
+    } catch (parseErr) {
+      // Attempt to recover truncated JSON — extract board names from partial response
+      const raw = parseErr instanceof Error ? parseErr.message : String(parseErr);
+      const boardMatch = raw.match(/"board"\s*:\s*\[([\s\S]*)/);
+      if (boardMatch) {
+        const names = [...boardMatch[1].matchAll(/"([^"]+)"/g)].map(m => m[1]);
+        if (names.length > 0) {
+          console.log(`[board-ai] Recovered ${names.length} names from truncated JSON`);
+          result = { action: 'submit_board', board: names, explanation: 'Recovered from truncated response' };
+        } else {
+          throw parseErr;
+        }
+      } else {
+        throw parseErr;
+      }
+    }
+
+    // Strip position/school annotations the model sometimes adds (e.g. "Name (QB)" → "Name")
+    if (result.board) {
+      result.board = result.board.map(name => name.replace(/\s*\(.*\)\s*$/, '').replace(/,\s*[A-Z]{1,4}\s*$/, '').trim());
+    }
+
     console.log(`[board-ai] LLM response: action=${result.action}, board=${result.board?.length ?? 0} names, error=${result.error ?? 'none'}`);
 
     if (result.error) {

@@ -20,9 +20,29 @@ async function getManager(guildId: string): Promise<DraftManager> {
   return managers.get(guildId)!;
 }
 
-client.once(Events.ClientReady, (c) => {
+client.once(Events.ClientReady, async (c) => {
   console.log(`✅ Logged in as ${c.user.tag}`);
   clientReady = true;
+
+  // Pre-fetch assigned users so display names are cached for embeds
+  for (const [guildId] of c.guilds.cache) {
+    try {
+      const manager = await getManager(guildId);
+      const state = manager.getState();
+      const userIds = new Set<string>();
+      for (const uid of Object.values(state.assignments)) userIds.add(uid);
+      for (const coList of Object.values(state.coManagers)) {
+        for (const uid of coList) userIds.add(uid);
+      }
+      const fetched = await Promise.allSettled(
+        [...userIds].map(id => c.users.fetch(id))
+      );
+      const resolved = fetched.filter(r => r.status === 'fulfilled').length;
+      console.log(`👥 Cached ${resolved}/${userIds.size} user names for guild ${guildId}`);
+    } catch (err) {
+      console.error(`Failed to pre-fetch users for guild ${guildId}:`, err);
+    }
+  }
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {

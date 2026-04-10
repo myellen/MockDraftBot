@@ -223,15 +223,15 @@ async function followUpOnTheClock(
   const nextSlot = manager.getCurrentSlot();
   if (!nextSlot) return;
   const nextTeam = TEAMS[nextSlot.currentTeam];
-  const gmId = manager.getState().assignments[nextSlot.currentTeam];
-  const ping = gmId ? `<@${gmId}>` : 'No GM assigned';
+  const pings = manager.getTeamPings(nextSlot.currentTeam);
+  const gmLabel = manager.getTeamGMLabel(nextSlot.currentTeam);
   await interaction.followUp({
-    content: gmId ? `<@${gmId}>` : undefined,
+    content: pings,
     embeds: [
       new EmbedBuilder()
         .setColor(nextTeam?.color ?? 0xFFB612)
         .setTitle(`🏈 ${nextTeam?.name ?? nextSlot.currentTeam} are on the clock!`)
-        .setDescription(`${ping} — Round ${nextSlot.round}, Pick ${nextSlot.roundPick} · Overall #${nextSlot.overall}`)
+        .setDescription(`${gmLabel} — Round ${nextSlot.round}, Pick ${nextSlot.roundPick} · Overall #${nextSlot.overall}`)
     ]
   });
 }
@@ -314,7 +314,7 @@ export async function execute(
 
   } else if (sub === 'assignments') {
     const state = manager.getState();
-    const embed = buildAssignmentsEmbed(state.assignments, TEAMS);
+    const embed = buildAssignmentsEmbed(state.assignments, TEAMS, id => manager.resolveUserName(id));
     await interaction.reply({ embeds: [embed] });
 
   } else if (sub === 'start') {
@@ -489,16 +489,7 @@ export async function autocomplete(
 
   // Admin subcommand autocomplete
   if (sub === 'assign' || sub === 'co-manager') {
-    const state = manager.getState();
-    const choices = Object.keys(TEAMS)
-      .filter(abbr => abbr.includes(q) || TEAMS[abbr].name.toUpperCase().includes(q))
-      .slice(0, 25)
-      .map(abbr => {
-        const gmId = state.assignments[abbr];
-        const gmLabel = gmId ? ` (GM assigned)` : ' (no GM)';
-        return { name: `${TEAMS[abbr].name} (${abbr})${gmLabel}`, value: abbr };
-      });
-    await interaction.respond(choices);
+    await interaction.respond(manager.getTeamChoices(focused.value as string));
     return;
   }
 

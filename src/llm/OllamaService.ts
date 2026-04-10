@@ -4,6 +4,7 @@ export interface OllamaConfig {
   host: string;       // e.g. "http://localhost:11434" or "https://ollama.com"
   apiKey?: string;     // required for Ollama Cloud
   model: string;       // e.g. "llama3.1", "deepseek-v3.1:671b-cloud"
+  numCtx: number;      // context window size (default 32768)
 }
 
 let instance: Ollama | null = null;
@@ -15,6 +16,7 @@ function getConfig(): OllamaConfig {
     host: process.env.OLLAMA_HOST ?? 'http://localhost:11434',
     apiKey: process.env.OLLAMA_API_KEY,
     model: process.env.OLLAMA_MODEL ?? 'llama3.1',
+    numCtx: parseInt(process.env.OLLAMA_CTX ?? '32768', 10),
   };
   return currentConfig;
 }
@@ -52,12 +54,52 @@ export async function chatJSON<T>(systemPrompt: string, userMessage: string): Pr
     options: {
       temperature: 0.3,
       num_predict: 16384,
+      num_ctx: config.numCtx,
     },
   });
 
   let text = response.message.content.trim();
   console.log('[OllamaService] chatJSON raw response:', text);
   // Strip markdown code fences if the model wraps its JSON output
+  text = text.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?\s*```$/i, '').trim();
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(`Invalid JSON from LLM: ${text.slice(0, 500)}`);
+  }
+}
+
+/**
+ * Send a multi-turn chat completion request and parse the response as JSON.
+ * Accepts conversation history as alternating user/assistant messages.
+ */
+export async function chatJSONWithHistory<T>(
+  systemPrompt: string,
+  history: Array<{ role: 'user' | 'assistant'; content: string }>,
+  userMessage: string,
+): Promise<T> {
+  const client = getClient();
+  const config = getConfig();
+
+  const messages = [
+    { role: 'system' as const, content: systemPrompt },
+    ...history.map(h => ({ role: h.role as 'user' | 'assistant', content: h.content })),
+    { role: 'user' as const, content: userMessage },
+  ];
+
+  const response = await client.chat({
+    model: config.model,
+    messages,
+    format: 'json',
+    options: {
+      temperature: 0.3,
+      num_predict: 16384,
+      num_ctx: config.numCtx,
+    },
+  });
+
+  let text = response.message.content.trim();
+  console.log('[OllamaService] chatJSONWithHistory raw response:', text);
   text = text.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?\s*```$/i, '').trim();
   try {
     return JSON.parse(text) as T;
@@ -82,6 +124,7 @@ export async function chatText(systemPrompt: string, userMessage: string): Promi
     options: {
       temperature: 0.3,
       num_predict: 16384,
+      num_ctx: config.numCtx,
     },
   });
 

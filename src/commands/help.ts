@@ -73,7 +73,7 @@ export async function execute(
         value:
           'See a full snapshot of a team\'s remaining draft picks, future pick rights, and current roster.\n' +
           '> `/inventory` — your own team\n' +
-          '> `/inventory gm:@user` — any other GM\'s team',
+          '> `/inventory team:` — any other team (autocomplete shows team names with GMs)',
         inline: false,
       },
       {
@@ -92,6 +92,7 @@ export async function execute(
         value:
           'Describe your draft strategy in plain English and let the AI build or adjust your board.\n' +
           '> `/board-ai description:` — e.g. "prioritize edge rushers and corners" or "draft for need"\n' +
+          '> `/board-ai description: file:` — upload a `.txt` or `.csv` file with player names and the AI will process it along with your instructions\n' +
           'The AI knows your roster, drafted players, and available prospects. It remembers your recent instructions across calls to refine your board over time.',
         inline: false,
       },
@@ -123,7 +124,7 @@ export async function execute(
       {
         name: 'Propose a Trade — `/trade propose`',
         value:
-          '**Required:** `to` — the other GM (@ them)\n' +
+          '**Required:** `to` — the team you want to trade with (autocomplete shows team names with GMs)\n' +
           '**Optional fields** (use at least one on each side):\n' +
           '• `offer` — picks you\'re giving — use the dropdown, or type overall # (`5`) or round.pick (`1.5`). Add more by typing a comma after each selection.\n' +
           '• `receive` — their picks you want — same format\n' +

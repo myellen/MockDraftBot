@@ -14,7 +14,7 @@ export async function execute(
   const state = manager.getState();
   const slot = manager.getCurrentSlot();
   const currentTeam = slot ? (TEAMS[slot.currentTeam] ?? null) : null;
-  const userId = slot ? (state.assignments[slot.currentTeam] ?? null) : null;
+  const gmLabel = slot ? manager.getTeamGMLabel(slot.currentTeam) : null;
   const timeRemaining = manager.getTimeRemaining();
   const lastPicks = manager.getLastNPicks(5);
 
@@ -22,7 +22,7 @@ export async function execute(
     state.status,
     slot,
     currentTeam,
-    userId,
+    gmLabel === '_unassigned_' ? null : gmLabel,
     timeRemaining,
     lastPicks,
     state.schedule.length,

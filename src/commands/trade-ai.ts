@@ -7,7 +7,7 @@ import { DraftManager, formatCapAmount } from '../draft/DraftManager';
 import { TEAMS } from '../data/teams';
 import { TEAM_CAP } from '../data/capData';
 import { buildTradeChartUrl } from '../utils/embeds';
-import { isOllamaConfigured, chatJSON } from '../llm/OllamaService';
+import { isOllamaConfigured, chatJSONWithHistory } from '../llm/OllamaService';
 
 export const data = new SlashCommandBuilder()
   .setName('trade-ai')
@@ -27,7 +27,31 @@ interface TradeAIResponse {
   offeredFuturePicks: string[];
   requestedFuturePicks: string[];
   explanation: string;
+  clarification?: string;
   error?: string;
+}
+
+// ── In-memory conversation history per user (resets on restart) ──
+interface ConversationEntry {
+  role: 'user' | 'assistant';
+  content: string;
+}
+const MAX_HISTORY = 6; // keep last 3 exchanges
+const conversations = new Map<string, ConversationEntry[]>();
+
+function getHistory(userId: string): ConversationEntry[] {
+  return conversations.get(userId) ?? [];
+}
+
+function addToHistory(userId: string, role: 'user' | 'assistant', content: string): void {
+  const history = conversations.get(userId) ?? [];
+  history.push({ role, content });
+  if (history.length > MAX_HISTORY) history.splice(0, history.length - MAX_HISTORY);
+  conversations.set(userId, history);
+}
+
+function clearHistory(userId: string): void {
+  conversations.delete(userId);
 }
 
 /**
@@ -143,10 +167,14 @@ ${recentPicksStr}
 - "targetTeam" is the OTHER team's abbreviation (e.g. "DAL", "NYJ")
 - If the user says "my 1st round pick" they mean their team's Round 1 pick from the picks listed above
 - If the user says "their 2nd rounder" they mean the target team's Round 2 pick
-- If you cannot determine the trade, set "error" to a helpful message explaining what's unclear
 - Match player names fuzzily — if they say "Mahomes" match to the full name "Patrick Mahomes" from the roster
 - Match team names fuzzily — "Cowboys" = "DAL", "Niners" or "49ers" = "SF", etc.
 - When the user references a player by position (e.g. "their QB"), look up the target team's roster to find the matching player
+- This is a CONVERSATION. Previous messages may provide context. If the user says "yes", "do it", "sure", "that works", or similar, they are confirming a trade you previously suggested in the conversation. Build the trade proposal from your prior suggestion — fill in ALL the trade fields.
+- Be PROACTIVE with suggestions. If the user says something vague like "swap late round picks with MIN", look at both teams' available picks in those rounds and propose a specific swap. Fill in the trade fields with your suggestion AND set "clarification" to describe what you're proposing so the user can confirm. For example: "How about your 6th (#206) for MIN's 7th (#218)? Reply 'yes' to send this proposal."
+- If you cannot fully determine the trade but have a best guess, fill in the trade fields with your best guess AND set "clarification" to ask the user to confirm or clarify.
+- Only set "error" if you truly cannot figure out any reasonable interpretation of the request.
+- When asking for clarification without a specific suggestion, you MUST still set "targetTeam" if you know the team. Only leave trade fields empty when you genuinely don't have enough info to suggest anything.
 
 ## Response Format
 Respond with ONLY valid JSON in this exact format:
@@ -159,6 +187,7 @@ Respond with ONLY valid JSON in this exact format:
   "offeredFuturePicks": ["2027R1"],
   "requestedFuturePicks": [],
   "explanation": "Brief explanation of the trade",
+  "clarification": null,
   "error": null
 }`;
 }
@@ -266,26 +295,44 @@ export async function execute(
 
     console.log(`[trade-ai] Prompt length: ${systemPrompt.length} chars, ~${Math.ceil(systemPrompt.length / 4)} tokens`);
 
-    const result = await chatJSON<TradeAIResponse>(systemPrompt, description);
-    console.log(`[trade-ai] LLM response: target=${result.targetTeam}, offeredPicks=${JSON.stringify(result.offeredPicks)}, requestedPicks=${JSON.stringify(result.requestedPicks)}, offeredPlayers=${JSON.stringify(result.offeredPlayers)}, requestedPlayers=${JSON.stringify(result.requestedPlayers)}, error=${result.error ?? 'none'}`);
+    const history = getHistory(interaction.user.id);
+    const result = await chatJSONWithHistory<TradeAIResponse>(systemPrompt, history, description);
+    console.log(`[trade-ai] LLM response: target=${result.targetTeam}, offeredPicks=${JSON.stringify(result.offeredPicks)}, requestedPicks=${JSON.stringify(result.requestedPicks)}, offeredPlayers=${JSON.stringify(result.offeredPlayers)}, requestedPlayers=${JSON.stringify(result.requestedPlayers)}, clarification=${result.clarification ?? 'none'}, error=${result.error ?? 'none'}`);
+
+    // Save user input to history
+    addToHistory(interaction.user.id, 'user', description);
 
     if (result.error) {
-      await interaction.editReply(`❌ AI couldn't parse your trade: ${result.error}`);
+      const errorResponse = `❌ ${result.error}`;
+      addToHistory(interaction.user.id, 'assistant', errorResponse);
+      await interaction.editReply(errorResponse);
+      return;
+    }
+
+    // Handle clarification — AI wants user to confirm or clarify before proposing
+    if (result.clarification) {
+      addToHistory(interaction.user.id, 'assistant', JSON.stringify(result));
+      await interaction.editReply(`🤔 ${result.clarification}`);
       return;
     }
 
     // Validate target team
     if (!result.targetTeam || !TEAMS[result.targetTeam]) {
-      await interaction.editReply(`❌ AI returned an invalid team: "${result.targetTeam}". Try being more specific about which team.`);
+      const msg = `Couldn't determine which team. Try being more specific (e.g. "the Cowboys" or "DAL").`;
+      addToHistory(interaction.user.id, 'assistant', msg);
+      await interaction.editReply(`❌ ${msg}`);
       return;
     }
 
     // Find the receiver's userId
     const receiverUserId = state.assignments[result.targetTeam];
     if (!receiverUserId) {
-      await interaction.editReply(`❌ The **${TEAMS[result.targetTeam]?.name}** don't have a registered GM. No one to trade with.`);
+      const msg = `The **${TEAMS[result.targetTeam]?.name}** don't have a registered GM. No one to trade with.`;
+      addToHistory(interaction.user.id, 'assistant', msg);
+      await interaction.editReply(`❌ ${msg}`);
       return;
     }
+    const receiverPings = manager.getTeamPings(result.targetTeam) ?? `<@${receiverUserId}>`;
 
     // Parse future picks into IDs (supports optional -TEAM suffix e.g. 2027R5-CAR)
     const parseFuturePickStr = (s: string, teamAbbr: string): string | null => {
@@ -356,8 +403,10 @@ export async function execute(
     );
 
     if (!tradeResult.success) {
+      const failMsg = `Trade proposal failed: ${tradeResult.error}`;
+      addToHistory(interaction.user.id, 'assistant', failMsg);
       await interaction.followUp({
-        content: `❌ Trade proposal failed: ${tradeResult.error}`,
+        content: `❌ ${failMsg}`,
         ephemeral: true,
       });
       return;
@@ -384,20 +433,24 @@ export async function execute(
     const hasPicks = (result.offeredPicks?.length ?? 0) > 0 || (result.requestedPicks?.length ?? 0) > 0 ||
       (result.offeredFuturePicks?.length ?? 0) > 0 || (result.requestedFuturePicks?.length ?? 0) > 0;
     const chartLink = hasPicks ? `\n[Trade chart](${buildTradeChartUrl(trade, state.schedule)})` : '';
+    const clarifyNote = result.clarification ? `\n> ℹ️ ${result.clarification}\n` : '';
 
     await interaction.editReply(
       `✅ Trade proposal **[${trade.id}]** sent!\n` +
       `**${myTeamName}** send: ${formatSide(result.offeredPicks ?? [], result.offeredPlayers ?? [], result.offeredFuturePicks ?? [])}\n` +
       `**${targetTeamName}** send: ${formatSide(result.requestedPicks ?? [], result.requestedPlayers ?? [], result.requestedFuturePicks ?? [])}` +
-      capText + chartLink + `\n\n` +
-      `<@${receiverUserId}> — use \`/trade accept ${trade.id}\` to accept, or \`/trade decline ${trade.id}\` to decline.`
+      clarifyNote + capText + chartLink + `\n\n` +
+      `${receiverPings} — use \`/trade accept ${trade.id}\` to accept, or \`/trade decline ${trade.id}\` to decline.`
     );
+
+    // Clear conversation history after a successful proposal
+    clearHistory(interaction.user.id);
 
     // Public announcement based on draft settings
     const announcement = manager.getConfig().tradeAnnouncement;
     if (announcement === 'public') {
       await interaction.followUp({
-        content: `<@${receiverUserId}>`,
+        content: receiverPings,
         embeds: [
           new EmbedBuilder()
             .setColor(0x5865F2)
@@ -410,12 +463,12 @@ export async function execute(
       });
     } else if (announcement === 'intrigue') {
       await interaction.followUp({
-        content: `<@${receiverUserId}>`,
+        content: receiverPings,
         embeds: [
           new EmbedBuilder()
             .setColor(0x5865F2)
             .setTitle('📞 Incoming Trade Offer!')
-            .setDescription(`<@${receiverUserId}> has received a trade proposal. Check \`/trade list\` for details.`)
+            .setDescription(`**${manager.getTeamGMLabel(result.targetTeam)}** has received a trade proposal. Check \`/trade list\` for details.`)
         ]
       });
     }

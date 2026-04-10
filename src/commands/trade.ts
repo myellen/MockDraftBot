@@ -16,10 +16,11 @@ export const data = new SlashCommandBuilder()
   .addSubcommand(sub => sub
     .setName('propose')
     .setDescription('Propose a trade to another GM')
-    .addUserOption(opt => opt
+    .addStringOption(opt => opt
       .setName('to')
-      .setDescription('The GM you want to trade with')
+      .setDescription('The team you want to trade with')
       .setRequired(true)
+      .setAutocomplete(true)
     )
     .addStringOption(opt => opt
       .setName('offer')
@@ -142,7 +143,7 @@ export async function execute(
   const sub = interaction.options.getSubcommand();
 
   if (sub === 'propose') {
-    const toUser = interaction.options.getUser('to', true);
+    const toTeamAbbr = interaction.options.getString('to', true).toUpperCase();
     const offerStr = interaction.options.getString('offer') ?? '';
     const receiveStr = interaction.options.getString('receive') ?? '';
     const offerPlayersStr = interaction.options.getString('offer-players') ?? '';
@@ -223,13 +224,18 @@ export async function execute(
 
     // Teams must be resolved before parsing players (jersey # lookup) and future picks
     const proposerTeamAbbr = manager.getUserTeam(interaction.user.id);
-    const receiverTeamAbbr = manager.getUserTeam(toUser.id);
     if (!proposerTeamAbbr) {
       await interaction.reply({ content: '❌ You do not have a registered team.', ephemeral: true });
       return;
     }
-    if (!receiverTeamAbbr) {
-      await interaction.reply({ content: '❌ That user does not have a registered team.', ephemeral: true });
+    if (!TEAMS[toTeamAbbr]) {
+      await interaction.reply({ content: `❌ Unknown team: ${toTeamAbbr}`, ephemeral: true });
+      return;
+    }
+    const receiverTeamAbbr = toTeamAbbr;
+    const toUserId = manager.getState().assignments[toTeamAbbr];
+    if (!toUserId) {
+      await interaction.reply({ content: `❌ ${TEAMS[toTeamAbbr]?.name} does not have a registered GM.`, ephemeral: true });
       return;
     }
 
@@ -263,7 +269,7 @@ export async function execute(
 
     await interaction.deferReply({ ephemeral: true });
     const result = await manager.trades.proposeTrade(
-      interaction.user.id, toUser.id,
+      interaction.user.id, toUserId,
       offered, requested,
       offeredPlayers, requestedPlayers,
       offeredFuture, requestedFuture
@@ -307,18 +313,20 @@ export async function execute(
     const hasPicks = offered.length > 0 || requested.length > 0 || offeredFuture.length > 0 || requestedFuture.length > 0;
     const chartLink = hasPicks ? `\n[Trade chart](${buildTradeChartUrl(trade, manager.getState().schedule)})` : '';
 
+    const receiverPings = manager.getTeamPings(trade.receiverTeam) ?? `<@${toUserId}>`;
+
     await interaction.editReply(
       `✅ Trade proposal **[${trade.id}]** sent!\n` +
       `**${proposerTeamName}** send: ${formatSide(offered, offeredPlayers, offeredFuture)}\n` +
       `**${receiverTeamName}** send: ${formatSide(requested, requestedPlayers, requestedFuture)}` +
       capImpactText + chartLink + `\n\n` +
-      `${toUser} — use \`/trade accept ${trade.id}\` to accept, or \`/trade decline ${trade.id}\` to decline.`
+      `${receiverPings} — use \`/trade accept ${trade.id}\` to accept, or \`/trade decline ${trade.id}\` to decline.`
     );
 
     const announcement = manager.getConfig().tradeAnnouncement;
     if (announcement === 'public') {
       await interaction.followUp({
-        content: `<@${toUser.id}>`,
+        content: receiverPings,
         embeds: [
           new EmbedBuilder()
             .setColor(0x5865F2)
@@ -331,12 +339,12 @@ export async function execute(
       });
     } else if (announcement === 'intrigue') {
       await interaction.followUp({
-        content: `<@${toUser.id}>`,
+        content: receiverPings,
         embeds: [
           new EmbedBuilder()
             .setColor(0x5865F2)
             .setTitle('📞 Incoming Trade Offer!')
-            .setDescription(`<@${toUser.id}> has received a trade proposal. Check \`/trade list\` for details.`)
+            .setDescription(`**${manager.getTeamGMLabel(trade.receiverTeam)}** has received a trade proposal. Check \`/trade list\` for details.`)
         ]
       });
     }
@@ -564,8 +572,14 @@ export async function autocomplete(
   // ── propose ───────────────────────────────────────────────────────────────
   if (sub === 'propose') {
     const proposerTeam = manager.getUserTeam(interaction.user.id);
-    const toUserId = interaction.options.get('to')?.value as string | undefined;
-    const receiverTeam = toUserId ? manager.getUserTeam(toUserId) : null;
+    const toTeamStr = (interaction.options.get('to')?.value as string | undefined)?.toUpperCase() ?? null;
+    const receiverTeam = toTeamStr && TEAMS[toTeamStr] ? toTeamStr : null;
+
+    // Team autocomplete for 'to'
+    if (focusedName === 'to') {
+      await interaction.respond(manager.getTeamChoices(focusedValue, proposerTeam ?? undefined));
+      return;
+    }
 
     // Current-draft pick autocomplete (append-mode: existing,new)
     if (focusedName === 'offer' || focusedName === 'receive') {
@@ -669,16 +683,7 @@ export async function autocomplete(
 
     // Team autocomplete for offer-team / receive-team
     if (focusedName === 'offer-team' || focusedName === 'receive-team') {
-      const q = focusedValue.toUpperCase();
-      const choices = Object.keys(TEAMS)
-        .filter(abbr => abbr.includes(q) || TEAMS[abbr].name.toUpperCase().includes(q))
-        .slice(0, 25)
-        .map(abbr => {
-          const gmId = state.assignments[abbr];
-          const label = gmId ? '' : ' (no GM)';
-          return { name: `${TEAMS[abbr].name} (${abbr})${label}`, value: abbr };
-        });
-      await interaction.respond(choices);
+      await interaction.respond(manager.getTeamChoices(focusedValue));
       return;
     }
 

@@ -239,15 +239,7 @@ export async function autocomplete(
   const focused = interaction.options.getFocused();
 
   if (sub === 'submit') {
-    const q = focused.toUpperCase();
-    const choices = Object.keys(TEAMS)
-      .filter(abbr => abbr.includes(q) || TEAMS[abbr].name.toUpperCase().includes(q))
-      .slice(0, 25)
-      .map(abbr => {
-        const hasBoard = manager.getCustomBoard(abbr).length > 0;
-        return { name: `${TEAMS[abbr].name} (${abbr})${hasBoard ? ' ★' : ''}`, value: abbr };
-      });
-    await interaction.respond(choices);
+    await interaction.respond(manager.getTeamChoices(focused));
     return;
   }
 

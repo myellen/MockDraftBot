@@ -31,17 +31,8 @@ export async function execute(
 
 export async function autocomplete(
   interaction: AutocompleteInteraction,
-  _manager: DraftManager
+  manager: DraftManager
 ): Promise<void> {
-  const query = interaction.options.getFocused().toLowerCase();
-  const results = Object.entries(TEAMS)
-    .filter(([abbr, team]) =>
-      abbr.toLowerCase().includes(query) ||
-      team.name.toLowerCase().includes(query) ||
-      team.city.toLowerCase().includes(query)
-    )
-    .slice(0, 25)
-    .map(([abbr, team]) => ({ name: `${team.name} (${abbr})`, value: abbr }));
-
-  await interaction.respond(results);
+  const query = interaction.options.getFocused();
+  await interaction.respond(manager.getTeamChoices(query));
 }

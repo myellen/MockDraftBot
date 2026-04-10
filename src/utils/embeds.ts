@@ -27,24 +27,24 @@ export function buildPickEmbed(pick: CompletedPick, slot: PickSlot, team: Team):
 export function buildOnTheClockEmbed(
   slot: PickSlot,
   team: Team,
-  userId: string | null,
+  gmLabel: string | null,
   timerSeconds: number | null
 ): EmbedBuilder {
   const label = pickLabel(slot.round, slot.roundPick);
-  const userMention = userId ? `<@${userId}>` : '🤖 CPU';
+  const displayName = gmLabel ?? '🤖 CPU';
   const embed = new EmbedBuilder()
     .setColor(team?.color ?? DEFAULT_COLOR)
     .setTitle(`⏱️ On the Clock — Pick ${label}`)
-    .setDescription(`${userMention} — **${team?.name ?? slot.currentTeam}** are on the clock!`)
+    .setDescription(`${displayName} — **${team?.name ?? slot.currentTeam}** are on the clock!`)
     .addFields({ name: 'Overall Pick', value: `#${slot.overall}`, inline: true });
 
-  if (timerSeconds && userId) {
+  if (timerSeconds && gmLabel) {
     embed.addFields({ name: 'Time Limit', value: `${timerSeconds}s`, inline: true });
   }
   if (slot.isTraded) {
     embed.setFooter({ text: `Via ${slot.originalTeam}` });
   }
-  if (userId) {
+  if (gmLabel) {
     embed.addFields({ name: 'How to pick', value: '`/pick <player name>`', inline: false });
   }
   return embed;
@@ -333,7 +333,8 @@ export function buildTeamRosterEmbed(team: Team, abbr: string, picks: CompletedP
 
 export function buildAssignmentsEmbed(
   assignments: Record<string, string>,
-  teams: Record<string, Team>
+  teams: Record<string, Team>,
+  resolveUser: (id: string) => string = id => id,
 ): EmbedBuilder {
   const assigned: string[] = [];
   const unassigned: string[] = [];
@@ -341,7 +342,7 @@ export function buildAssignmentsEmbed(
   for (const [abbr, team] of Object.entries(teams)) {
     const userId = assignments[abbr];
     if (userId) {
-      assigned.push(`${team.name} → <@${userId}>`);
+      assigned.push(`${team.name} → ${resolveUser(userId)}`);
     } else {
       unassigned.push(team.name);
     }
@@ -383,7 +384,7 @@ export function buildStatusEmbed(
   status: string,
   slot: PickSlot | null,
   currentTeam: Team | null,
-  userId: string | null,
+  gmLabel: string | null,
   timeRemaining: number | null,
   lastPicks: CompletedPick[],
   totalPicks: number,
@@ -400,7 +401,7 @@ export function buildStatusEmbed(
       { name: 'Current Pick', value: `Pick ${label} (Overall #${slot.overall})`, inline: true },
       { name: 'On the Clock', value: currentTeam.name, inline: true },
     );
-    if (userId) embed.addFields({ name: 'GM', value: `<@${userId}>`, inline: true });
+    if (gmLabel) embed.addFields({ name: 'GM', value: gmLabel, inline: true });
     if (timeRemaining !== null) {
       embed.addFields({ name: '⏳ Time Remaining', value: `${timeRemaining}s`, inline: true });
     }

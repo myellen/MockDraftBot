@@ -1,6 +1,7 @@
 import {
   SlashCommandBuilder,
   ChatInputCommandInteraction,
+  AutocompleteInteraction,
   EmbedBuilder,
 } from 'discord.js';
 import { DraftManager, formatCapAmount } from '../draft/DraftManager';
@@ -21,22 +22,23 @@ const POS_GROUPS: Array<{ label: string; positions: string[] }> = [
 
 export const data = new SlashCommandBuilder()
   .setName('inventory')
-  .setDescription("View a GM's draft picks and roster")
-  .addUserOption(opt => opt
-    .setName('gm')
-    .setDescription('The GM to view (leave empty for yourself)')
+  .setDescription("View a team's draft picks and roster")
+  .addStringOption(opt => opt
+    .setName('team')
+    .setDescription('Team to view (leave empty for your own)')
     .setRequired(false)
+    .setAutocomplete(true)
   );
 
 export async function execute(
   interaction: ChatInputCommandInteraction,
   manager: DraftManager
 ): Promise<void> {
-  const targetUser = interaction.options.getUser('gm') ?? interaction.user;
-  const teamAbbr = manager.getUserTeam(targetUser.id);
-  if (!teamAbbr) {
-    const who = targetUser.id === interaction.user.id ? 'You do' : 'That user does';
-    await interaction.reply({ content: `❌ ${who} not have a registered team.`, ephemeral: true });
+  const teamOption = interaction.options.getString('team')?.toUpperCase();
+  const teamAbbr = teamOption ?? manager.getUserTeam(interaction.user.id);
+  if (!teamAbbr || !TEAMS[teamAbbr]) {
+    const msg = teamOption ? `❌ Unknown team: ${teamOption}` : '❌ You do not have a registered team. Specify a team name.';
+    await interaction.reply({ content: msg, ephemeral: true });
     return;
   }
 
@@ -98,7 +100,7 @@ export async function execute(
   const embed = new EmbedBuilder()
     .setTitle(`📋 ${teamName} — Inventory`)
     .setColor(team?.color ?? 0x5865F2)
-    .setFooter({ text: `GM: ${targetUser.username}` })
+    .setFooter({ text: `GM: ${interaction.client.users.cache.get(manager.getState().assignments[teamAbbr] ?? '')?.displayName ?? 'unassigned'}` })
     .addFields(
       { name: '📅 2026 Draft Picks', value: picksText, inline: false },
       { name: '🔮 Future Pick Rights', value: futureText.trim() || '_None_', inline: false },
@@ -127,4 +129,12 @@ export async function execute(
   }
 
   await interaction.reply({ embeds: [embed], ephemeral: true });
+}
+
+export async function autocomplete(
+  interaction: AutocompleteInteraction,
+  manager: DraftManager
+): Promise<void> {
+  const query = interaction.options.getFocused();
+  await interaction.respond(manager.getTeamChoices(query));
 }

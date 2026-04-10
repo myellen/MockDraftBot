@@ -510,8 +510,8 @@ export class DraftManager {
 
       // Human's turn (or CPU without autoPick)
       const team = TEAMS[slot.currentTeam];
-      const embed = buildOnTheClockEmbed(slot, team, userId, this.state.config.timerSeconds);
-      await this.sendEmbed(embed, userId ? `<@${userId}>` : undefined);
+      const embed = buildOnTheClockEmbed(slot, team, userId ? this.getTeamGMLabel(slot.currentTeam) : null, this.state.config.timerSeconds);
+      await this.sendEmbed(embed, this.getTeamPings(slot.currentTeam));
 
       if (this.state.config.timerSeconds && userId) {
         this.startTimer();
@@ -867,6 +867,59 @@ export class DraftManager {
     return this.state.coManagers[teamAbbr] ?? [];
   }
 
+  /** Resolve a user ID to a display name, falling back to the raw ID. */
+  resolveUserName(userId: string): string {
+    return this.client.users.cache.get(userId)?.displayName ?? userId;
+  }
+
+  /** Build a ping string that mentions the GM and all co-managers for a team. */
+  getTeamPings(teamAbbr: string): string | undefined {
+    const gmId = this.state.assignments[teamAbbr];
+    if (!gmId) return undefined;
+    const coIds = this.getCoManagers(teamAbbr);
+    const mentions = [gmId, ...coIds].map(id => `<@${id}>`);
+    return mentions.join(' ');
+  }
+
+  /** Get display names for a team's GM and co-managers (for use in embeds). */
+  getTeamGMLabel(teamAbbr: string): string {
+    const gmId = this.state.assignments[teamAbbr];
+    if (!gmId) return '_unassigned_';
+    const gmName = this.resolveUserName(gmId);
+    const coIds = this.getCoManagers(teamAbbr);
+    if (coIds.length === 0) return gmName;
+    const coNames = coIds.map(id => this.resolveUserName(id));
+    return [gmName, ...coNames].join(', ');
+  }
+
+  /**
+   * Build autocomplete choices for team selection, sorted alphabetically by team name.
+   * Shows "Team Name - gmUsername" or "Team Name" if unassigned.
+   * Filters by query matching team name, abbreviation, or GM username.
+   */
+  getTeamChoices(query: string, exclude?: string): Array<{ name: string; value: string }> {
+    const q = query.toLowerCase();
+    return Object.keys(TEAMS)
+      .sort((a, b) => TEAMS[a].name.localeCompare(TEAMS[b].name))
+      .filter(abbr => abbr !== exclude)
+      .filter(abbr => {
+        if (!q) return true;
+        const gmId = this.state.assignments[abbr];
+        const gmUser = gmId ? this.client.users.cache.get(gmId) : null;
+        return abbr.toLowerCase().includes(q) ||
+          TEAMS[abbr].name.toLowerCase().includes(q) ||
+          TEAMS[abbr].city.toLowerCase().includes(q) ||
+          (gmUser?.username?.toLowerCase().includes(q) ?? false);
+      })
+      .slice(0, 25)
+      .map(abbr => {
+        const gmId = this.state.assignments[abbr];
+        const gmUser = gmId ? this.client.users.cache.get(gmId) : null;
+        const gmLabel = gmUser ? ` - ${gmUser.displayName}` : gmId ? ` - ${gmId}` : '';
+        return { name: `${TEAMS[abbr].name}${gmLabel}`.slice(0, 100), value: abbr };
+      });
+  }
+
   // ─── Admin Operations ─────────────────────────────────────────────────────
 
   async adminAssignTeam(teamAbbr: string, userId: string): Promise<{ success: boolean; error?: string }> {
@@ -916,7 +969,7 @@ export class DraftManager {
 
     const team = TEAMS[slot.currentTeam];
     const embed = buildOnTheClockEmbed(slot, team, userId, this.state.config.timerSeconds);
-    await this.sendEmbed(embed, userId ? `<@${userId}>` : undefined);
+    await this.sendEmbed(embed, this.getTeamPings(slot.currentTeam));
 
     if (this.state.config.timerSeconds && userId) {
       this.startTimer();
