@@ -45,7 +45,7 @@ export interface CompletedPick {
   pickedAt: number;        // Date.now()
 }
 
-export type TradeAnnouncement = 'private' | 'public' | 'intrigue';
+export type TradeAnnouncement = 'private' | 'public' | 'intrigue' | 'insider';
 
 export interface DraftConfig {
   channelId: string | null;

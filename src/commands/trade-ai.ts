@@ -8,6 +8,7 @@ import { TEAMS } from '../data/teams';
 import { TEAM_CAP } from '../data/capData';
 import { buildTradeChartUrl } from '../utils/embeds';
 import { isOllamaConfigured, chatJSONWithHistory } from '../llm/OllamaService';
+import { buildInsiderTradeEmbed } from './rumor';
 
 export const data = new SlashCommandBuilder()
   .setName('trade-ai')
@@ -470,6 +471,12 @@ export async function execute(
             .setTitle('📞 Incoming Trade Offer!')
             .setDescription(`**${manager.getTeamGMLabel(result.targetTeam)}** has received a trade proposal. Check \`/trade list\` for details.`)
         ]
+      });
+    } else if (announcement === 'insider') {
+      const insiderEmbed = await buildInsiderTradeEmbed(targetTeamName);
+      await interaction.followUp({
+        content: receiverPings,
+        embeds: [insiderEmbed],
       });
     }
 

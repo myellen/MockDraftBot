@@ -53,6 +53,7 @@ export const data = new SlashCommandBuilder()
         { name: 'Private — no public notification', value: 'private' },
         { name: 'Public — full trade details shown publicly', value: 'public' },
         { name: 'Intrigue — public ping without details', value: 'intrigue' },
+        { name: 'Insider — AI insider tweet announces the offer', value: 'insider' },
       )
     )
     .addBooleanOption(opt => opt

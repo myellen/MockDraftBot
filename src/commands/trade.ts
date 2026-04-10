@@ -9,6 +9,7 @@ import { TEAMS } from '../data/teams';
 import { TEAM_CAP } from '../data/capData';
 import { buildPendingTradesEmbed, buildTradeExecutedEmbed, buildTradeChartUrl } from '../utils/embeds';
 import { isAdmin } from '../utils/permissions';
+import { buildInsiderTradeEmbed } from './rumor';
 
 export const data = new SlashCommandBuilder()
   .setName('trade')
@@ -346,6 +347,12 @@ export async function execute(
             .setTitle('📞 Incoming Trade Offer!')
             .setDescription(`**${manager.getTeamGMLabel(trade.receiverTeam)}** has received a trade proposal. Check \`/trade list\` for details.`)
         ]
+      });
+    } else if (announcement === 'insider') {
+      const insiderEmbed = await buildInsiderTradeEmbed(receiverTeamName);
+      await interaction.followUp({
+        content: receiverPings,
+        embeds: [insiderEmbed],
       });
     }
     return;

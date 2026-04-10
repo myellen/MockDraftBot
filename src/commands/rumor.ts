@@ -9,7 +9,7 @@ import { isOllamaConfigured, chatJSON, chatText } from '../llm/OllamaService';
 
 // ── Insider personas ────────────────────────────────────────────────────────
 
-interface Insider {
+export interface Insider {
   name: string;
   handle: string;
   style: string;        // writing style notes for the reporter agent
@@ -18,7 +18,7 @@ interface Insider {
 
 const AVATAR_BASE = 'https://raw.githubusercontent.com/myellen/MockDraftBot/main/assets/avatars';
 
-const INSIDERS: Insider[] = [
+export const INSIDERS: Insider[] = [
   {
     name: 'Adam Schefter',
     handle: '@AdamSchefter',
@@ -178,11 +178,14 @@ Respond with ONLY valid JSON:
 
 // ── Reporter agent ──────────────────────────────────────────────────────────
 
-function buildReporterPrompt(insider: Insider): string {
+export function buildReporterPrompt(insider: Insider): string {
   return `You are ${insider.name} (${insider.handle}), a prominent NFL insider known for breaking draft news.
 
 ## Your Style
 ${insider.style}
+
+## Context
+You are a REPORTER. Your sources are NFL GMs, scouts, and front office personnel who leak intel to you. When a source says "lots of teams are calling me" or "I want to trade up", you report it in third person — e.g. "I'm hearing multiple teams have called the [team] about moving up" or "Sources say [team] is fielding calls." You NEVER speak as the GM. You report what you're hearing FROM them. Use phrases like "I'm told", "sources say", "per sources", "I'm hearing" — never "I want" or "teams are calling me" (that's what the SOURCE said, you translate it into reporter language).
 
 ## Rules
 - Write a SINGLE tweet (max 280 characters)
@@ -195,6 +198,37 @@ ${insider.style}
 - The tweet should feel like breaking news or a hot tip, not a summary or recap
 
 Respond with ONLY the tweet text. Nothing else.`;
+}
+
+// ── Insider trade announcement helper ───────────────────────────────────────
+
+/**
+ * Generate an insider-style embed announcing a trade proposal.
+ * Used by trade.ts and trade-ai.ts when tradeAnnouncement === 'insider'.
+ */
+export async function buildInsiderTradeEmbed(
+  receiverTeamName: string,
+): Promise<EmbedBuilder> {
+  const insider = INSIDERS[Math.floor(Math.random() * INSIDERS.length)];
+  const prompt = buildReporterPrompt(insider);
+  const input = `A source within the ${receiverTeamName} organization tells you they just received a trade offer and are evaluating it. Write a tweet breaking this news. End the tweet by telling people to check /trade list to see what's on the table — work it into your voice naturally (e.g. "Details dropping soon — check /trade list" or "👀 /trade list for the full picture").`;
+
+  let tweet: string;
+  try {
+    tweet = await chatText(prompt, input, 1.2);
+    tweet = tweet.replace(/^["'""'']|["'""'']$/g, '').trim();
+    if (tweet.length > 280) tweet = tweet.slice(0, 277) + '...';
+  } catch {
+    // Fallback if LLM is down
+    tweet = `I'm hearing the ${receiverTeamName} have received a trade offer. Stay tuned. 👀 Check /trade list`;
+  }
+
+  return new EmbedBuilder()
+    .setAuthor({ name: `${insider.name} (${insider.handle})`, iconURL: insider.avatar })
+    .setDescription(tweet)
+    .setColor(0x1DA1F2)
+    .setFooter({ text: '𝕏' })
+    .setTimestamp();
 }
 
 // ── Command ─────────────────────────────────────────────────────────────────
@@ -311,7 +345,7 @@ export async function execute(
       console.log(`[rumor] Reporter (fallback): ${insider.name}`);
     }
 
-    let tweet = await chatText(reporterPrompt, reporterInput, 0.8);
+    let tweet = await chatText(reporterPrompt, reporterInput, 1.2);
 
     // Strip any quotes the model may have wrapped around the tweet
     tweet = tweet.replace(/^["'""'']|["'""'']$/g, '').trim();
@@ -325,7 +359,7 @@ export async function execute(
 
     // ── Build tweet-style embed ──
     const embed = new EmbedBuilder()
-      .setAuthor({ name: `${insider.name} ${insider.handle}`, iconURL: insider.avatar })
+      .setAuthor({ name: `${insider.name} (${insider.handle})`, iconURL: insider.avatar })
       .setDescription(tweet)
       .setColor(0x1DA1F2)
       .setFooter({ text: '𝕏' })
