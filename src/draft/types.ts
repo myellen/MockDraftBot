@@ -106,10 +106,19 @@ export interface DraftState {
   futurePickRights: FuturePickRight[];     // tradeable future-year picks
 }
 
+export type NeedTier = 'primary' | 'secondary' | 'depth' | 'none';
+
+export interface TeamNeeds {
+  primary: string[];    // e.g. ['EDGE', 'LB']
+  secondary: string[];  // e.g. ['WR', 'CB', 'S']
+  depth: string[];      // e.g. ['OG', 'DT']
+}
+
 export interface BoardData {
   customBoards: Record<string, number[]>;      // teamAbbr -> ordered prospect ranks (GM-submitted)
   positionPriority: Record<string, string[]>;  // teamAbbr -> ordered position list for autopick
   strategyNotes: Record<string, string[]>;     // teamAbbr -> last N board-ai instructions for LLM memory
+  teamNeeds: Record<string, TeamNeeds>;        // teamAbbr -> declared positional needs for scoring engine
 }
 
 export interface PickResult {

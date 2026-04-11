@@ -2,9 +2,12 @@ import {
   SlashCommandBuilder,
   ChatInputCommandInteraction,
   AutocompleteInteraction,
+  EmbedBuilder,
 } from 'discord.js';
 import { DraftManager } from '../draft/DraftManager';
+import { getTopPicks, ScorerContext } from '../draft/DraftScorer';
 import { ALL_POSITIONS } from '../data/prospects';
+import { Prospect, TeamNeeds } from '../draft/types';
 import { TEAMS } from '../data/teams';
 import { isAdmin } from '../utils/permissions';
 import { buildBoardEmbed, buildMyBoardEmbed } from '../utils/embeds';
@@ -80,6 +83,39 @@ export const data = new SlashCommandBuilder()
     )
   )
   .addSubcommand(sub => sub
+    .setName('needs')
+    .setDescription('Set team position needs for smarter autopick')
+    .addStringOption(opt => opt
+      .setName('primary')
+      .setDescription('Critical needs — comma-separated positions (e.g. EDGE,CB,LB)')
+      .setRequired(false)
+      .setAutocomplete(true)
+    )
+    .addStringOption(opt => opt
+      .setName('secondary')
+      .setDescription('Secondary needs — comma-separated positions (e.g. WR,S,DT)')
+      .setRequired(false)
+      .setAutocomplete(true)
+    )
+    .addStringOption(opt => opt
+      .setName('depth')
+      .setDescription('Depth positions — comma-separated positions (e.g. OG,RB)')
+      .setRequired(false)
+      .setAutocomplete(true)
+    )
+  )
+  .addSubcommand(sub => sub
+    .setName('explain')
+    .setDescription('Show how the scoring engine ranks your top picks')
+    .addIntegerOption(opt => opt
+      .setName('count')
+      .setDescription('Number of picks to show (default: 5)')
+      .setMinValue(1)
+      .setMaxValue(15)
+      .setRequired(false)
+    )
+  )
+  .addSubcommand(sub => sub
     .setName('clear')
     .setDescription('Clear your submitted board and/or position priority')
     .addStringOption(opt => opt
@@ -89,6 +125,7 @@ export const data = new SlashCommandBuilder()
       .addChoices(
         { name: 'Custom board only',     value: 'board'    },
         { name: 'Position priority only', value: 'priority' },
+        { name: 'Position needs only',   value: 'needs'    },
         { name: 'Everything',            value: 'all'      },
       )
     )
@@ -215,6 +252,116 @@ export async function execute(
     return;
   }
 
+  if (sub === 'needs') {
+    const teamAbbr = manager.getUserTeam(interaction.user.id);
+    if (!teamAbbr) {
+      await interaction.reply({ content: '❌ You need a registered team to set needs.', ephemeral: true });
+      return;
+    }
+
+    const primaryStr = interaction.options.getString('primary');
+    const secondaryStr = interaction.options.getString('secondary');
+    const depthStr = interaction.options.getString('depth');
+
+    // If no arguments, display current needs
+    if (!primaryStr && !secondaryStr && !depthStr) {
+      const current = manager.getTeamNeeds(teamAbbr);
+      if (!current) {
+        await interaction.reply({
+          content: `No needs set for **${teamAbbr}**. Autopick will auto-detect from roster depth.\nUse \`/board needs primary:EDGE,CB secondary:WR,S\` to set them manually.`,
+          ephemeral: true,
+        });
+        return;
+      }
+      const lines: string[] = [`**${teamAbbr} Position Needs:**`];
+      if (current.primary.length > 0) lines.push(`🔴 **Primary:** ${current.primary.join(', ')}`);
+      if (current.secondary.length > 0) lines.push(`🟡 **Secondary:** ${current.secondary.join(', ')}`);
+      if (current.depth.length > 0) lines.push(`🟢 **Depth:** ${current.depth.join(', ')}`);
+      await interaction.reply({ content: lines.join('\n'), ephemeral: true });
+      return;
+    }
+
+    // Parse and validate positions
+    const parse = (str: string | null): string[] =>
+      str ? str.split(',').map(p => p.trim().toUpperCase()).filter(Boolean) : [];
+
+    const primary = parse(primaryStr);
+    const secondary = parse(secondaryStr);
+    const depth = parse(depthStr);
+
+    const allPositions = [...primary, ...secondary, ...depth];
+    const invalid = allPositions.filter(p => !ALL_POSITIONS.includes(p));
+    if (invalid.length > 0) {
+      await interaction.reply({
+        content: `❌ Unknown position${invalid.length > 1 ? 's' : ''}: ${invalid.join(', ')}\nValid: ${ALL_POSITIONS.join(', ')}`,
+        ephemeral: true,
+      });
+      return;
+    }
+
+    const needs: TeamNeeds = { primary, secondary, depth };
+    manager.setTeamNeeds(teamAbbr, needs);
+
+    const lines: string[] = [`✅ Needs set for **${teamAbbr}**:`];
+    if (primary.length > 0) lines.push(`🔴 **Primary:** ${primary.join(', ')}`);
+    if (secondary.length > 0) lines.push(`🟡 **Secondary:** ${secondary.join(', ')}`);
+    if (depth.length > 0) lines.push(`🟢 **Depth:** ${depth.join(', ')}`);
+    lines.push('\nAutopick will prioritize these positions when scoring prospects.');
+    await interaction.reply({ content: lines.join('\n'), ephemeral: true });
+    return;
+  }
+
+  if (sub === 'explain') {
+    const teamAbbr = manager.getUserTeam(interaction.user.id);
+    if (!teamAbbr) {
+      await interaction.reply({ content: '❌ You need a registered team to view scoring.', ephemeral: true });
+      return;
+    }
+
+    const state = manager.getState();
+    if (state.availableRanks.length === 0) {
+      await interaction.reply({ content: '❌ The draft hasn\'t started yet — no prospects to score.', ephemeral: true });
+      return;
+    }
+
+    const count = interaction.options.getInteger('count') ?? 5;
+    const ctx = manager.buildScorerContext(teamAbbr);
+    const top = getTopPicks(ctx, count);
+
+    if (top.length === 0) {
+      await interaction.reply({ content: '❌ No available prospects to score.', ephemeral: true });
+      return;
+    }
+
+    const medals = ['🥇', '🥈', '🥉'];
+    const lines = top.map((sp, i) => {
+      const medal = medals[i] ?? `**${i + 1}.**`;
+      const p = sp.prospect;
+      return `${medal} **${p.name}** (${p.pos}, #${p.rank})\n` +
+        `   Board: \`${sp.boardScore.toFixed(3)}\` × PosVal: \`${sp.positionalValue.toFixed(3)}\` × ` +
+        `Need: \`${sp.needUrgency.toFixed(3)}\` × Scarcity: \`${sp.scarcityPremium.toFixed(3)}\` = **${sp.compositeScore.toFixed(4)}**`;
+    });
+
+    // Show current needs config at bottom
+    const needs = manager.getTeamNeeds(teamAbbr);
+    const needsLine = needs
+      ? [
+          needs.primary.length > 0 ? `🔴 ${needs.primary.join(', ')}` : null,
+          needs.secondary.length > 0 ? `🟡 ${needs.secondary.join(', ')}` : null,
+          needs.depth.length > 0 ? `🟢 ${needs.depth.join(', ')}` : null,
+        ].filter(Boolean).join('  ')
+      : '_Auto-detected from roster_';
+
+    const embed = new EmbedBuilder()
+      .setTitle(`Scoring Breakdown — ${TEAMS[teamAbbr]?.name ?? teamAbbr}`)
+      .setDescription(lines.join('\n\n'))
+      .setFooter({ text: `Needs: ${needsLine}` })
+      .setColor(TEAMS[teamAbbr]?.color ?? 0x888888);
+
+    await interaction.reply({ embeds: [embed], ephemeral: true });
+    return;
+  }
+
   if (sub === 'clear') {
     const teamAbbr = manager.getUserTeam(interaction.user.id);
     if (!teamAbbr) {
@@ -222,11 +369,16 @@ export async function execute(
       return;
     }
 
-    const what = (interaction.options.getString('what') ?? 'all') as 'board' | 'priority' | 'all';
+    const what = (interaction.options.getString('what') ?? 'all') as 'board' | 'priority' | 'needs' | 'all';
     manager.clearBoard(teamAbbr, what);
 
-    const label = what === 'board' ? 'custom board' : what === 'priority' ? 'position priority' : 'custom board and position priority';
-    await interaction.reply({ content: `✅ Cleared your ${label}. Autopick will use default rank order.`, ephemeral: true });
+    const labels: Record<string, string> = {
+      board: 'custom board',
+      priority: 'position priority',
+      needs: 'position needs',
+      all: 'custom board, position priority, and needs',
+    };
+    await interaction.reply({ content: `✅ Cleared your ${labels[what]}. Autopick will use default rank order.`, ephemeral: true });
     return;
   }
 }
@@ -243,7 +395,7 @@ export async function autocomplete(
     return;
   }
 
-  if (sub === 'priority') {
+  if (sub === 'priority' || sub === 'needs') {
     const parts = focused.split(',');
     const currentFragment = parts[parts.length - 1].trim().toUpperCase();
     const prefix = parts.slice(0, -1).map(p => p.trim().toUpperCase()).filter(Boolean);

@@ -4,7 +4,9 @@ import * as path from 'path';
 import {
   DraftState, DraftStatus, DraftConfig, CompletedPick, CancelledTrade,
   PickSlot, PickResult, RegisterResult, PendingTrade, FuturePickRight, BoardData,
+  Prospect, TeamNeeds,
 } from './types';
+import { getBestPick, getTopPicks, formatScoredPick, autoDetectNeeds, countPositions, ScorerContext } from './DraftScorer';
 import { TradeManager } from './TradeManager';
 import { buildSchedule } from './scheduleBuilder';
 import { FUTURE_PICK_TRADES } from '../data/draftOrder';
@@ -27,6 +29,7 @@ const DEFAULT_BOARD_DATA: BoardData = {
   customBoards: {},
   positionPriority: {},
   strategyNotes: {},
+  teamNeeds: {},
 };
 
 function buildFuturePickRights(): FuturePickRight[] {
@@ -139,6 +142,7 @@ export class DraftManager {
         customBoards: parsed.customBoards ?? {},
         positionPriority: parsed.positionPriority ?? {},
         strategyNotes: (parsed as any).strategyNotes ?? {},
+        teamNeeds: (parsed as any).teamNeeds ?? {},
       };
     } catch {
       boardData = { ...DEFAULT_BOARD_DATA };
@@ -314,25 +318,51 @@ export class DraftManager {
 
   // ─── Custom Board / Position Priority ────────────────────────────────────
 
-  /** Fallback chain: custom board → position priority → default rank order */
+  /** Composite scoring engine: scores all available prospects and picks the best */
   private getBestPickForTeam(teamAbbr: string): number | undefined {
-    const available = new Set(this.state.availableRanks);
+    const ctx = this.buildScorerContext(teamAbbr);
+    if (ctx.availableProspects.length === 0) return undefined;
 
-    const board = this.boardData.customBoards[teamAbbr];
-    if (board?.length) {
-      const pick = board.find(rank => available.has(rank));
-      if (pick !== undefined) return pick;
+    // Log top 5 picks for debugging
+    const top5 = getTopPicks(ctx, 5);
+    console.log(`🧠 Composite scores for ${teamAbbr}:`);
+    for (const sp of top5) {
+      console.log(`   ${formatScoredPick(sp)}`);
     }
 
-    const priority = this.boardData.positionPriority[teamAbbr];
-    if (priority?.length) {
-      for (const pos of priority) {
-        const pick = this.state.availableRanks.find(rank => PROSPECT_BY_RANK.get(rank)?.pos === pos);
-        if (pick !== undefined) return pick;
-      }
+    return getBestPick(ctx);
+  }
+
+  /** Build the context object the scorer needs from current draft state */
+  buildScorerContext(teamAbbr: string): ScorerContext {
+    const availableSet = new Set(this.state.availableRanks);
+    const availableProspects = PROSPECTS_DEDUPED.filter(p => availableSet.has(p.rank));
+    const teamPicks = this.state.picks.filter(p => p.team === teamAbbr);
+    const roster = (ROSTERS[teamAbbr] ?? []).map(r => ({ name: r.name, pos: r.pos }));
+    const customBoard = this.boardData.customBoards[teamAbbr] ?? [];
+    const positionPriority = this.boardData.positionPriority[teamAbbr] ?? [];
+
+    // Get remaining pick slots for this team
+    const remainingPicks = this.state.schedule
+      .slice(this.state.currentPickIndex)
+      .filter(s => s.currentTeam === teamAbbr);
+
+    // Use declared needs or auto-detect from roster depth
+    let needs = this.boardData.teamNeeds[teamAbbr];
+    if (!needs || (needs.primary.length === 0 && needs.secondary.length === 0 && needs.depth.length === 0)) {
+      const posCounts = countPositions(roster, teamPicks);
+      needs = autoDetectNeeds(posCounts);
     }
 
-    return this.state.availableRanks[0];
+    return {
+      availableProspects,
+      customBoard,
+      positionPriority,
+      teamPicks,
+      roster,
+      remainingPicks,
+      needs,
+    };
   }
 
   submitBoard(teamAbbr: string, rankedNames: string[]): { matched: number; unmatched: string[] } {
@@ -358,9 +388,10 @@ export class DraftManager {
     void this.persistBoards();
   }
 
-  clearBoard(teamAbbr: string, what: 'board' | 'priority' | 'all'): void {
+  clearBoard(teamAbbr: string, what: 'board' | 'priority' | 'needs' | 'all'): void {
     if (what === 'board' || what === 'all') delete this.boardData.customBoards[teamAbbr];
     if (what === 'priority' || what === 'all') delete this.boardData.positionPriority[teamAbbr];
+    if (what === 'needs' || what === 'all') delete this.boardData.teamNeeds[teamAbbr];
     if (what === 'all') delete this.boardData.strategyNotes[teamAbbr];
     void this.persistBoards();
   }
@@ -382,6 +413,20 @@ export class DraftManager {
     notes.push(note);
     if (notes.length > maxNotes) notes.splice(0, notes.length - maxNotes);
     this.boardData.strategyNotes[teamAbbr] = notes;
+    void this.persistBoards();
+  }
+
+  setTeamNeeds(teamAbbr: string, needs: TeamNeeds): void {
+    this.boardData.teamNeeds[teamAbbr] = needs;
+    void this.persistBoards();
+  }
+
+  getTeamNeeds(teamAbbr: string): TeamNeeds | undefined {
+    return this.boardData.teamNeeds[teamAbbr];
+  }
+
+  clearTeamNeeds(teamAbbr: string): void {
+    delete this.boardData.teamNeeds[teamAbbr];
     void this.persistBoards();
   }
 
