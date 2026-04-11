@@ -45,7 +45,15 @@ export function buildOnTheClockEmbed(
     embed.setFooter({ text: `Via ${slot.originalTeam}` });
   }
   if (gmLabel) {
-    embed.addFields({ name: 'How to pick', value: '`/pick <player name>`', inline: false });
+    embed.addFields({
+      name: 'How to play',
+      value:
+        '`/pick` — search for a player by name and draft them\n' +
+        '`/board view` — browse available prospects\n' +
+        '`/autopick` — let the bot pick for you\n' +
+        '`/trade propose` — propose a trade',
+      inline: false,
+    });
   }
   return embed;
 }
@@ -408,6 +416,14 @@ export function buildStatusEmbed(
   }
 
   embed.addFields({ name: 'Progress', value: `${madeCount} / ${totalPicks} picks`, inline: true });
+
+  if (status === 'idle') {
+    embed.addFields({
+      name: 'Getting Started',
+      value: 'Use `/draft register` to claim a team. The draft begins when an admin runs `/draft start`.',
+      inline: false,
+    });
+  }
 
   if (lastPicks.length) {
     const recent = lastPicks.map(p =>

@@ -226,7 +226,7 @@ export async function execute(
     // Teams must be resolved before parsing players (jersey # lookup) and future picks
     const proposerTeamAbbr = manager.getUserTeam(interaction.user.id);
     if (!proposerTeamAbbr) {
-      await interaction.reply({ content: '❌ You do not have a registered team.', ephemeral: true });
+      await interaction.reply({ content: '❌ You do not have a registered team. Use `/draft register` to claim one.', ephemeral: true });
       return;
     }
     if (!TEAMS[toTeamAbbr]) {
@@ -388,7 +388,7 @@ export async function execute(
   if (sub === 'list') {
     const userTeam = manager.getUserTeam(interaction.user.id);
     if (!userTeam) {
-      await interaction.reply({ content: '❌ You do not have a registered team.', ephemeral: true });
+      await interaction.reply({ content: '❌ You do not have a registered team. Use `/draft register` to claim one.', ephemeral: true });
       return;
     }
 

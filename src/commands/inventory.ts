@@ -37,7 +37,7 @@ export async function execute(
   const teamOption = interaction.options.getString('team')?.toUpperCase();
   const teamAbbr = teamOption ?? manager.getUserTeam(interaction.user.id);
   if (!teamAbbr || !TEAMS[teamAbbr]) {
-    const msg = teamOption ? `❌ Unknown team: ${teamOption}` : '❌ You do not have a registered team. Specify a team name.';
+    const msg = teamOption ? `❌ Unknown team: ${teamOption}` : '❌ You do not have a registered team. Use `/draft register` to claim one, or specify a team name.';
     await interaction.reply({ content: msg, ephemeral: true });
     return;
   }

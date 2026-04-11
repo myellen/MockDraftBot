@@ -119,7 +119,7 @@ export async function execute(
 
     const teamAbbr = overrideTeam ?? manager.getUserTeam(interaction.user.id);
     if (!teamAbbr) {
-      await interaction.reply({ content: '❌ You need a registered team to submit a board.', ephemeral: true });
+      await interaction.reply({ content: '❌ You need a registered team to submit a board. Use `/draft register` to claim one.', ephemeral: true });
       return;
     }
     if (!TEAMS[teamAbbr]) {
@@ -176,7 +176,7 @@ export async function execute(
   if (sub === 'priority') {
     const teamAbbr = manager.getUserTeam(interaction.user.id);
     if (!teamAbbr) {
-      await interaction.reply({ content: '❌ You need a registered team to set position priority.', ephemeral: true });
+      await interaction.reply({ content: '❌ You need a registered team to set position priority. Use `/draft register` to claim one.', ephemeral: true });
       return;
     }
 
@@ -199,7 +199,7 @@ export async function execute(
   if (sub === 'myboard') {
     const teamAbbr = manager.getUserTeam(interaction.user.id);
     if (!teamAbbr) {
-      await interaction.reply({ content: '❌ You need a registered team to view your board.', ephemeral: true });
+      await interaction.reply({ content: '❌ You need a registered team to view your board. Use `/draft register` to claim one.', ephemeral: true });
       return;
     }
     const page = interaction.options.getInteger('page') ?? 1;
@@ -218,7 +218,7 @@ export async function execute(
   if (sub === 'clear') {
     const teamAbbr = manager.getUserTeam(interaction.user.id);
     if (!teamAbbr) {
-      await interaction.reply({ content: '❌ You need a registered team.', ephemeral: true });
+      await interaction.reply({ content: '❌ You need a registered team. Use `/draft register` to claim one.', ephemeral: true });
       return;
     }
 

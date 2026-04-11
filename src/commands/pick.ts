@@ -9,7 +9,7 @@ export const data = new SlashCommandBuilder()
   .addStringOption(opt => opt
     .setName('position')
     .setDescription('Filter by position (default: All)')
-    .setRequired(true)
+    .setRequired(false)
     .addChoices(
       { name: 'All',  value: 'ALL'  },
       { name: 'QB',   value: 'QB'   },

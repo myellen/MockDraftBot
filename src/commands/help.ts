@@ -11,6 +11,17 @@ export async function execute(
 ): Promise<void> {
   const color = 0xFFB612;
 
+  const quickStart = new EmbedBuilder()
+    .setColor(color)
+    .setTitle('🚀 Quick Start')
+    .setDescription(
+      '**1.** `/draft register` — claim your NFL team\n' +
+      '**2.** `/pick` — when you\'re on the clock, search and draft a player\n' +
+      '**3.** `/board view` — browse available prospects\n' +
+      '**4.** `/autopick` — let the bot pick for you\n\n' +
+      'That\'s all you need! Read below for trading, custom boards, and more.'
+    );
+
   const overview = new EmbedBuilder()
     .setColor(color)
     .setTitle('🏈 2026 NFL Mock Draft — How to Play')
@@ -221,6 +232,6 @@ export async function execute(
       },
     );
 
-  await interaction.reply({ embeds: [overview, trading], ephemeral: true });
+  await interaction.reply({ embeds: [quickStart, overview, trading], ephemeral: true });
   await interaction.followUp({ embeds: [admin], ephemeral: true });
 }

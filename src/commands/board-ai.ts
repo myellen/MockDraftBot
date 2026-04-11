@@ -166,7 +166,7 @@ export async function execute(
 
   const userTeam = manager.getUserTeam(interaction.user.id);
   if (!userTeam) {
-    await interaction.reply({ content: '❌ You need a registered team to edit your board.', ephemeral: true });
+    await interaction.reply({ content: '❌ You need a registered team to edit your board. Use `/draft register` to claim one.', ephemeral: true });
     return;
   }
 
