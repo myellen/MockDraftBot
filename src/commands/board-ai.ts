@@ -1,19 +1,20 @@
 import {
   SlashCommandBuilder,
   ChatInputCommandInteraction,
+  EmbedBuilder,
 } from 'discord.js';
 import { DraftManager } from '../draft/DraftManager';
 import { TEAMS } from '../data/teams';
 import { ALL_POSITIONS } from '../data/prospects';
-import { isOllamaConfigured, chatJSON } from '../llm/OllamaService';
+import { isOllamaConfigured, chatJSONWithHistory } from '../llm/OllamaService';
 import { buildMyBoardEmbed } from '../utils/embeds';
 
 export const data = new SlashCommandBuilder()
   .setName('board-ai')
-  .setDescription('Describe draft board changes in plain English and let the AI apply them')
+  .setDescription('Ask about prospects or manage your draft board with AI')
   .addStringOption(opt => opt
     .setName('description')
-    .setDescription('e.g. "prioritize QBs and edge rushers" or "move Cam Ward to the top of my board"')
+    .setDescription('e.g. "who are the best EDGE rushers?" or "prioritize QBs" or "put those on my board"')
     .setRequired(true)
   )
   .addAttachmentOption(opt => opt
@@ -23,12 +24,36 @@ export const data = new SlashCommandBuilder()
   );
 
 interface BoardAIResponse {
-  action: 'submit_board' | 'set_priority' | 'clear';
+  action: 'submit_board' | 'set_priority' | 'clear' | 'answer_question';
   board?: string[];
   priority?: string[];
   clearWhat?: 'board' | 'priority' | 'all';
+  answer?: string;
   explanation: string;
   error?: string;
+}
+
+// ── In-memory conversation history per user (resets on restart) ──
+interface ConversationEntry {
+  role: 'user' | 'assistant';
+  content: string;
+}
+const MAX_HISTORY = 6; // keep last 3 exchanges
+const conversations = new Map<string, ConversationEntry[]>();
+
+function getHistory(userId: string): ConversationEntry[] {
+  return conversations.get(userId) ?? [];
+}
+
+function addToHistory(userId: string, role: 'user' | 'assistant', content: string): void {
+  const history = conversations.get(userId) ?? [];
+  history.push({ role, content });
+  if (history.length > MAX_HISTORY) history.splice(0, history.length - MAX_HISTORY);
+  conversations.set(userId, history);
+}
+
+function clearHistory(userId: string): void {
+  conversations.delete(userId);
 }
 
 /**
@@ -69,9 +94,9 @@ function buildBoardSystemPrompt(
 
   const positionsList = ALL_POSITIONS.join(', ');
 
-  return `You are an NFL draft board assistant for a mock draft Discord bot. Your job is to parse natural-language instructions about draft board changes into structured data.
+  return `You are an NFL draft scout and board assistant for a mock draft Discord bot. You can answer questions about prospects, team needs, and draft strategy, AND parse board change instructions into structured data.
 
-You are a stateless agent — all the information you need is in this prompt.
+All the information you need is in this prompt and the conversation history.
 
 The user controls the **${teamName} (${teamAbbr})**.
 
@@ -126,7 +151,16 @@ Set a position priority list for autopick fallback. This is used when the custom
 Clear the custom board, position priority, or both.
 - Set "clearWhat" to "board", "priority", or "all".
 
+### 4. answer_question
+Answer a question about prospects, team needs, draft strategy, or player comparisons.
+- Use the "answer" field for your response (plain text, Discord-formatted markdown is OK).
+- Be specific — cite prospect names, ranks, positions, and schools from the data above.
+- Keep answers concise (under 1500 characters) — users are in Discord, not reading essays.
+- If the user seems to be asking a question AND implying a board change, answer the question and note they can follow up to apply changes.
+
 ## Rules
+- This is a CONVERSATION. Previous messages provide context. If the user says "put those on my board", "yes do it", or similar, they are referring to prospects from your previous answer — build a board from those players.
+- When a user asks a question (who, what, which, compare, tell me about, how, why, etc.) use answer_question. When they give an instruction (prioritize, move, add, draft for need, set, put, build, create, etc.) use the appropriate board action.
 - Match player names fuzzily — "Cam Ward" matches "Cam Ward" in the list, "Travis Hunter" matches "Travis Hunter"
 - If a player name is ambiguous, pick the one that best matches context
 - When the user says "move X to the top", put that player first on the board and keep the rest in order
@@ -138,18 +172,20 @@ Clear the custom board, position priority, or both.
 ## Response Format
 Respond with ONLY valid JSON in this exact format:
 {
-  "action": "submit_board" | "set_priority" | "clear",
+  "action": "submit_board" | "set_priority" | "clear" | "answer_question",
   "board": ["Player Name 1", "Player Name 2", ...],
   "priority": ["QB", "OT", "EDGE"],
   "clearWhat": "board" | "priority" | "all",
+  "answer": "Your detailed answer to the user's question",
   "explanation": "Brief explanation of changes made",
   "error": null
 }
 
 Only include the fields relevant to the action:
-- "submit_board": include "board"
-- "set_priority": include "priority"
-- "clear": include "clearWhat"`;
+- "submit_board": include "board" and "explanation"
+- "set_priority": include "priority" and "explanation"
+- "clear": include "clearWhat" and "explanation"
+- "answer_question": include "answer"`;
 }
 
 export async function execute(
@@ -255,8 +291,9 @@ export async function execute(
     console.log(`[board-ai] Prompt length: ${systemPrompt.length} chars, ~${Math.ceil(systemPrompt.length / 4)} tokens`);
 
     let result: BoardAIResponse;
+    const history = getHistory(interaction.user.id);
     try {
-      result = await chatJSON<BoardAIResponse>(systemPrompt, userMessage);
+      result = await chatJSONWithHistory<BoardAIResponse>(systemPrompt, history, userMessage);
     } catch (parseErr) {
       // Attempt to recover truncated JSON — extract board names from partial response
       const raw = parseErr instanceof Error ? parseErr.message : String(parseErr);
@@ -288,6 +325,24 @@ export async function execute(
 
     const teamName = TEAMS[userTeam]?.name ?? userTeam;
 
+    if (result.action === 'answer_question') {
+      const answer = result.answer ?? result.explanation ?? 'No answer provided.';
+      const truncated = answer.length > 4000 ? answer.slice(0, 3997) + '...' : answer;
+
+      // Save to history for follow-up
+      addToHistory(interaction.user.id, 'user', userMessage);
+      addToHistory(interaction.user.id, 'assistant', JSON.stringify(result));
+
+      const embed = new EmbedBuilder()
+        .setColor(TEAMS[userTeam]?.color ?? 0x5865F2)
+        .setTitle('Scout Report')
+        .setDescription(truncated)
+        .setFooter({ text: 'Follow up with /board-ai to ask more or apply changes to your board.' });
+
+      await interaction.editReply({ embeds: [embed] });
+      return;
+    }
+
     if (result.action === 'submit_board') {
       const names = result.board ?? [];
       if (names.length === 0) {
@@ -313,6 +368,7 @@ export async function execute(
       const priority = manager.getPositionPriority(userTeam);
       const embed = buildMyBoardEmbed(teamName, entries, page, totalPages, total, priority);
 
+      clearHistory(interaction.user.id);
       await interaction.editReply({ content: reply, embeds: [embed] });
       return;
     }
@@ -333,6 +389,7 @@ export async function execute(
       const normalized = positions.map(p => p.toUpperCase());
       manager.setPositionPriority(userTeam, normalized);
 
+      clearHistory(interaction.user.id);
       await interaction.editReply(
         `✅ **AI Position Priority for ${teamName}**\n` +
         `> ${result.explanation}\n\n` +
@@ -347,6 +404,7 @@ export async function execute(
       manager.clearBoard(userTeam, what);
       const label = what === 'board' ? 'custom board' : what === 'priority' ? 'position priority' : 'custom board and position priority';
 
+      clearHistory(interaction.user.id);
       await interaction.editReply(
         `✅ **Cleared ${label} for ${teamName}**\n` +
         `> ${result.explanation}\n\n` +
