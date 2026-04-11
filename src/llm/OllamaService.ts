@@ -60,11 +60,17 @@ export async function chatJSON<T>(systemPrompt: string, userMessage: string): Pr
 
   let text = response.message.content.trim();
   console.log('[OllamaService] chatJSON raw response:', text);
-  // Strip markdown code fences if the model wraps its JSON output
-  text = text.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?\s*```$/i, '').trim();
+  // Strip wrapping code fences — only the outer ones, not code blocks inside JSON string values
+  text = text.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?\s*```\s*$/i, '').trim();
   try {
     return JSON.parse(text) as T;
   } catch {
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      try {
+        return JSON.parse(jsonMatch[0]) as T;
+      } catch { /* fall through */ }
+    }
     throw new Error(`Invalid JSON from LLM: ${text.slice(0, 500)}`);
   }
 }
@@ -100,10 +106,18 @@ export async function chatJSONWithHistory<T>(
 
   let text = response.message.content.trim();
   console.log('[OllamaService] chatJSONWithHistory raw response:', text);
-  text = text.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?\s*```$/i, '').trim();
+  // Strip wrapping code fences — only the outer ones, not code blocks inside JSON string values
+  text = text.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?\s*```\s*$/i, '').trim();
+  // If that still fails to parse, try extracting the JSON object directly
   try {
     return JSON.parse(text) as T;
   } catch {
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      try {
+        return JSON.parse(jsonMatch[0]) as T;
+      } catch { /* fall through */ }
+    }
     throw new Error(`Invalid JSON from LLM: ${text.slice(0, 500)}`);
   }
 }

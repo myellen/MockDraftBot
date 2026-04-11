@@ -8,6 +8,7 @@ import { ALL_POSITIONS } from '../data/prospects';
 import { TEAMS } from '../data/teams';
 import { isAdmin } from '../utils/permissions';
 import { buildBoardEmbed, buildMyBoardEmbed } from '../utils/embeds';
+import { isAvailable as isBeastAvailable, getBeastRanking } from '../data/beastScouting';
 
 export const data = new SlashCommandBuilder()
   .setName('board')
@@ -76,6 +77,11 @@ export const data = new SlashCommandBuilder()
       .setName('page')
       .setDescription('Page number (default: 1)')
       .setMinValue(1)
+      .setRequired(false)
+    )
+    .addBooleanOption(opt => opt
+      .setName('all')
+      .setDescription('Show all pages at once')
       .setRequired(false)
     )
   )
@@ -202,6 +208,7 @@ export async function execute(
       await interaction.reply({ content: '❌ You need a registered team to view your board. Use `/draft register` to claim one.', ephemeral: true });
       return;
     }
+    const showAll = interaction.options.getBoolean('all') ?? false;
     const page = interaction.options.getInteger('page') ?? 1;
     const { entries, total, totalPages, page: safePage } = manager.getMyBoardPage(teamAbbr, page);
     if (total === 0) {
@@ -210,8 +217,22 @@ export async function execute(
     }
     const priority = manager.getPositionPriority(teamAbbr);
     const teamName = TEAMS[teamAbbr]?.name ?? teamAbbr;
-    const embed = buildMyBoardEmbed(teamName, entries, safePage, totalPages, total, priority);
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    const beastLookup = isBeastAvailable() ? getBeastRanking : undefined;
+
+    if (showAll) {
+      // Send each page as its own message (6000 char embed limit per message)
+      const firstPage = manager.getMyBoardPage(teamAbbr, 1);
+      const firstEmbed = buildMyBoardEmbed(teamName, firstPage.entries, 1, totalPages, total, priority, beastLookup);
+      await interaction.reply({ embeds: [firstEmbed], ephemeral: true });
+      for (let p = 2; p <= totalPages; p++) {
+        const pageData = manager.getMyBoardPage(teamAbbr, p);
+        const embed = buildMyBoardEmbed(teamName, pageData.entries, p, totalPages, total, priority, beastLookup);
+        await interaction.followUp({ embeds: [embed], ephemeral: true });
+      }
+    } else {
+      const embed = buildMyBoardEmbed(teamName, entries, safePage, totalPages, total, priority, beastLookup);
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+    }
     return;
   }
 

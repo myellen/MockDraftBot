@@ -1,13 +1,13 @@
 import {
   SlashCommandBuilder,
   ChatInputCommandInteraction,
-  EmbedBuilder,
 } from 'discord.js';
 import { DraftManager } from '../draft/DraftManager';
 import { TEAMS } from '../data/teams';
 import { ALL_POSITIONS } from '../data/prospects';
-import { isOllamaConfigured, chatJSONWithHistory } from '../llm/OllamaService';
+import { isOllamaConfigured, chatJSON, chatJSONWithHistory } from '../llm/OllamaService';
 import { buildMyBoardEmbed } from '../utils/embeds';
+import { isAvailable as isBeastAvailable, lookupProspect, lookupProspectLight, lookupByPositionRank, searchByPosition, getTopProspects, getBeastRanking } from '../data/beastScouting';
 
 export const data = new SlashCommandBuilder()
   .setName('board-ai')
@@ -38,7 +38,7 @@ interface ConversationEntry {
   role: 'user' | 'assistant';
   content: string;
 }
-const MAX_HISTORY = 6; // keep last 3 exchanges
+const MAX_HISTORY = 10; // keep last 5 exchanges
 const conversations = new Map<string, ConversationEntry[]>();
 
 function getHistory(userId: string): ConversationEntry[] {
@@ -72,8 +72,9 @@ function buildBoardSystemPrompt(
   strategyNotes: string[],
 ): string {
   const defaultBoardSize = Math.max(10, remainingPicks * 2);
+  // Compact format to minimize tokens: "1. Name|POS|School"
   const prospectsStr = availableProspects
-    .map(p => `  ${p.rank}. ${p.name} (${p.pos}, ${p.school})`)
+    .map(p => `${p.rank}. ${p.name}|${p.pos}|${p.school}`)
     .join('\n');
 
   const boardStr = currentBoard.length > 0
@@ -85,8 +86,8 @@ function buildBoardSystemPrompt(
     : '(none set)';
 
   const rosterStr = currentRoster.length > 0
-    ? currentRoster.map(p => `  ${p.name} (${p.pos})`).join('\n')
-    : '  (none loaded)';
+    ? currentRoster.map(p => `${p.name}|${p.pos}`).join(', ')
+    : '(none loaded)';
 
   const draftedStr = draftedPlayers.length > 0
     ? draftedPlayers.map(p => `  #${p.overall}: ${p.prospectName} (${p.pos})`).join('\n')
@@ -108,8 +109,8 @@ ${rosterStr}
 These picks have already been made for this team in the current draft:
 ${draftedStr}
 
-## Available Prospects (by overall rank)
-These are the prospects still available to be drafted:
+## Available Prospects
+These are the prospects still available to be drafted. The "#" is just a pool ID for name matching — it is NOT a quality ranking. Do NOT cite these numbers as prospect rankings.
 ${prospectsStr}
 
 ## Current Custom Board
@@ -155,8 +156,12 @@ Clear the custom board, position priority, or both.
 Answer a question about prospects, team needs, draft strategy, or player comparisons.
 - Use the "answer" field for your response (plain text, Discord-formatted markdown is OK).
 - Be specific — cite prospect names, ranks, positions, and schools from the data above.
-- Keep answers concise (under 1500 characters) — users are in Discord, not reading essays.
+- Keep answers concise but thorough. You can use up to 3000 characters if the question warrants it (e.g. comparing 30 prospects). Don't pad short answers though.
+- **Formatting:** Use Discord markdown (**bold**, *italic*, headers, bullets) for prose. Discord does NOT support markdown tables — for tabular/comparative data, use a code block (\`\`\`) with monospace-aligned columns. Only the table itself should be in the code block; all other text stays outside so markdown renders.
 - If the user seems to be asking a question AND implying a board change, answer the question and note they can follow up to apply changes.
+- **Scouting data from Dane Brugler's "The Beast" 2026 NFL Draft Guide may be appended to the user's message.** When present, ALWAYS prefer Beast data over the prospect pool list above. The Beast grades, position ranks (e.g. "EDGE5"), and overall ranks ("OVR #42") are authoritative — they come from the NFL's most respected draft analyst. The pool IDs in the "Available Prospects" list are NOT rankings. When citing a prospect's rank, use the Beast's position rank and overall rank, NOT the pool number.
+- Reference specific Beast scouting insights: cite Brugler's grade (e.g. "2nd round grade"), strengths, weaknesses, and player comparisons.
+- **Measurements:** Beast data includes labeled combine and pro day measurements (forty, vert, broad, shuttle, cone, bench, arm, hand, wing). Null values mean the prospect did not participate in that drill.
 
 ## Rules
 - This is a CONVERSATION. Previous messages provide context. If the user says "put those on my board", "yes do it", or similar, they are referring to prospects from your previous answer — build a board from those players.
@@ -186,6 +191,178 @@ Only include the fields relevant to the action:
 - "set_priority": include "priority" and "explanation"
 - "clear": include "clearWhat" and "explanation"
 - "answer_question": include "answer"`;
+}
+
+// ── LLM-powered scouting data extraction ──
+
+interface DataNeeds {
+  lookups: string[];                                  // prospect names to fetch full reports for
+  posRanks: Array<{ pos: string; rank: number }>;     // "EDGE 30" → specific position rank lookup
+  posLists: Array<{ pos: string; count: number }>;    // "top 30 EDGE" → list at position
+  board: boolean;                                     // include scouting data for board players
+  topN: number;                                       // >0 → include top N overall prospects
+}
+
+const EXTRACTION_SYSTEM = `You extract NFL draft scouting data needs from a user query. Given the query, recent conversation context, and the user's board, determine what prospect data should be fetched from the scouting database.
+
+Return ONLY JSON:
+{
+  "lookups": [],    // prospect names to get full scouting reports for (max 15)
+  "posRanks": [],   // specific position rank lookups, e.g. [{"pos":"EDGE","rank":30}]
+  "posLists": [],   // position group lists, e.g. [{"pos":"EDGE","count":30}]
+  "board": false,   // true if query references "my board" or the user's draft strategy
+  "topN": 0         // >0 if query asks about best available / BPA / top overall prospects
+}
+
+Key rules:
+- "edge 30" / "EDGE30" / "the 30th edge" → posRanks: [{"pos":"EDGE","rank":30}] (specific prospect at that rank)
+- "top 30 edge rushers" / "list 30 EDGE" → posLists: [{"pos":"EDGE","count":30}]
+- "tell me about Cam Ward" → lookups: ["Cam Ward"]
+- "tell me about him" / "what are his weaknesses" → resolve the pronoun from conversation context, put the actual name in lookups
+- "compare X and Y" → lookups: ["X", "Y"]
+- "best available" / "BPA" → topN: 20
+- "draft for need" / "analyze my board" / "what should I draft" → board: true
+- Position abbreviations: QB, RB, WR, TE, OT, G, C, EDGE, DT, LB, CB, S
+- Default count for position lists is 10 unless user specifies
+- If query is a simple board instruction ("prioritize QBs", "clear my board") with no scouting question, return all empty/false/0
+
+Follow-up handling (CRITICAL):
+- "what were their 40 times?" / "rank them by..." / "same but..." → look at conversation history to determine WHAT GROUP was discussed. If previous exchange was about "top 30 EDGE", re-fetch posLists: [{"pos":"EDGE","count":30}] with the SAME count.
+- "same" / "same thing" / "do that again" → repeat the same data needs as implied by the previous exchange
+- When the previous exchange discussed a position group, ALWAYS re-fetch that group via posLists — do NOT try to list individual names in lookups (the measurements data comes from the position list, not individual lookups)`;
+
+/**
+ * Use a fast LLM call to determine what scouting data the main call needs.
+ * Falls back to empty data on failure (main LLM can still answer from its context).
+ */
+async function extractDataNeeds(
+  description: string,
+  userId: string,
+  boardNames: string[],
+): Promise<DataNeeds> {
+  const fallback: DataNeeds = { lookups: [], posRanks: [], posLists: [], board: false, topN: 0 };
+
+  try {
+    // Build conversation context so extraction can resolve follow-ups
+    const history = getHistory(userId);
+    let contextBlock = '';
+    if (history.length > 0) {
+      // Include last 2 exchanges (user + assistant) so extraction sees the full thread
+      const recent = history.slice(-4); // up to 2 user + 2 assistant entries
+      const parts: string[] = [];
+      for (const h of recent) {
+        const label = h.role === 'user' ? 'User' : 'AI';
+        // Generous truncation — extraction prompt is small, room for context
+        parts.push(`${label}: ${h.content.slice(0, 1500)}`);
+      }
+      contextBlock = `\nConversation history:\n${parts.join('\n')}`;
+    }
+    const boardBlock = boardNames.length > 0
+      ? `\nUser's board players: ${boardNames.slice(0, 20).join(', ')}`
+      : '';
+
+    const userMsg = `Query: ${description}${contextBlock}${boardBlock}`;
+    console.log(`[board-ai] Extraction call: ${userMsg.length} chars`);
+
+    const result = await chatJSON<DataNeeds>(EXTRACTION_SYSTEM, userMsg);
+    console.log(`[board-ai] Extraction result: ${JSON.stringify(result)}`);
+
+    return {
+      lookups: Array.isArray(result.lookups) ? result.lookups.slice(0, 15) : [],
+      posRanks: Array.isArray(result.posRanks) ? result.posRanks.slice(0, 5) : [],
+      posLists: Array.isArray(result.posLists) ? result.posLists.slice(0, 3) : [],
+      board: !!result.board,
+      topN: typeof result.topN === 'number' ? Math.min(result.topN, 30) : 0,
+    };
+  } catch (err) {
+    console.warn('[board-ai] Extraction call failed, proceeding without pre-fetch:', err instanceof Error ? err.message : err);
+    return fallback;
+  }
+}
+
+/**
+ * Fetch scouting data based on LLM-extracted data needs.
+ */
+function fetchScoutingData(needs: DataNeeds, boardNames: string[]): string {
+  const sections: string[] = [];
+
+  // 1. Named prospect lookups
+  for (const name of needs.lookups) {
+    const data = lookupProspect(name);
+    if (!data.includes('"error"')) {
+      sections.push(`### Scouting Report: ${name}\n${data}`);
+    }
+  }
+
+  // 2. Position rank lookups (e.g. "EDGE 30" → the specific prospect)
+  for (const { pos, rank } of needs.posRanks) {
+    const data = lookupByPositionRank(pos, rank);
+    if (!data.includes('"error"')) {
+      sections.push(`### ${pos} #${rank} Scouting Report\n${data}`);
+    }
+  }
+
+  // 3. Position group lists (e.g. "top 30 EDGE")
+  for (const { pos, count } of needs.posLists) {
+    const data = searchByPosition(pos, Math.min(count, 30));
+    if (!data.includes('"error"')) {
+      sections.push(`### Top ${count} ${pos} Prospects (Beast Rankings)\n${data}`);
+    }
+  }
+
+  // 4. Board player lookups — use light version (measurements + stats, no writeup text)
+  //    to fit all board players within token budget. Include board rank for ordering.
+  if (needs.board && boardNames.length > 0) {
+    const alreadyFetched = new Set(needs.lookups.map(n => n.toLowerCase()));
+    const boardData: string[] = [];
+    for (let i = 0; i < boardNames.length; i++) {
+      const name = boardNames[i];
+      if (alreadyFetched.has(name.toLowerCase())) continue;
+      const data = lookupProspectLight(name);
+      if (!data.includes('"error"')) {
+        // Inject board rank so LLM knows the ordering
+        const parsed = JSON.parse(data);
+        parsed.boardRank = i + 1;
+        boardData.push(JSON.stringify(parsed));
+      }
+    }
+    if (boardData.length > 0) {
+      sections.push(`### Board Players (${boardData.length}) — ordered by board rank\n[${boardData.join(',')}]`);
+    }
+  }
+
+  // 5. Top overall prospects
+  if (needs.topN > 0) {
+    const data = getTopProspects(needs.topN);
+    sections.push(`### Overall Top ${needs.topN} Prospects (Beast Rankings)\n${data}`);
+  }
+
+  if (sections.length === 0) return '';
+
+  return '\n\n---\n## Scouting Data (from Dane Brugler\'s "The Beast" 2026 NFL Draft Guide)\n\n' +
+    sections.join('\n\n');
+}
+
+/** Call the LLM and handle truncated JSON recovery. */
+async function callLLM(
+  systemPrompt: string,
+  history: ConversationEntry[],
+  userMessage: string,
+): Promise<BoardAIResponse> {
+  try {
+    return await chatJSONWithHistory<BoardAIResponse>(systemPrompt, history, userMessage);
+  } catch (parseErr) {
+    const raw = parseErr instanceof Error ? parseErr.message : String(parseErr);
+    const boardMatch = raw.match(/"board"\s*:\s*\[([\s\S]*)/);
+    if (boardMatch) {
+      const names = [...boardMatch[1].matchAll(/"([^"]+)"/g)].map(m => m[1]);
+      if (names.length > 0) {
+        console.log(`[board-ai] Recovered ${names.length} names from truncated JSON`);
+        return { action: 'submit_board', board: names, explanation: 'Recovered from truncated response' };
+      }
+    }
+    throw parseErr;
+  }
 }
 
 export async function execute(
@@ -239,8 +416,8 @@ export async function execute(
 
     // ── Build fresh context snapshot ──
 
-    // All available prospects (full list for the board)
-    const { prospects: availableProspects } = manager.getAvailableProspects(undefined, 1, 500);
+    // Available prospects — limit to top 200 to keep prompt size manageable for Ollama Cloud
+    const { prospects: availableProspects } = manager.getAvailableProspects(undefined, 1, 200);
     const prospectData = availableProspects.map(p => ({
       rank: p.rank,
       name: p.name,
@@ -288,28 +465,23 @@ export async function execute(
     // Save this input as a strategy note for future context
     manager.addStrategyNote(userTeam, description, 10);
 
-    console.log(`[board-ai] Prompt length: ${systemPrompt.length} chars, ~${Math.ceil(systemPrompt.length / 4)} tokens`);
-
-    let result: BoardAIResponse;
-    const history = getHistory(interaction.user.id);
-    try {
-      result = await chatJSONWithHistory<BoardAIResponse>(systemPrompt, history, userMessage);
-    } catch (parseErr) {
-      // Attempt to recover truncated JSON — extract board names from partial response
-      const raw = parseErr instanceof Error ? parseErr.message : String(parseErr);
-      const boardMatch = raw.match(/"board"\s*:\s*\[([\s\S]*)/);
-      if (boardMatch) {
-        const names = [...boardMatch[1].matchAll(/"([^"]+)"/g)].map(m => m[1]);
-        if (names.length > 0) {
-          console.log(`[board-ai] Recovered ${names.length} names from truncated JSON`);
-          result = { action: 'submit_board', board: names, explanation: 'Recovered from truncated response' };
-        } else {
-          throw parseErr;
-        }
-      } else {
-        throw parseErr;
+    // ── LLM-powered pre-fetch: extract what scouting data the main call needs ──
+    let enrichedMessage = userMessage;
+    const boardNames = currentBoard.filter(b => b.pos !== '?').map(b => b.name);
+    if (isBeastAvailable()) {
+      const needs = await extractDataNeeds(description, interaction.user.id, boardNames);
+      const scoutingCtx = fetchScoutingData(needs, boardNames);
+      if (scoutingCtx) {
+        enrichedMessage += scoutingCtx;
+        console.log(`[board-ai] Pre-injected ${scoutingCtx.length} chars of Beast scouting data`);
       }
     }
+
+    console.log(`[board-ai] Prompt length: ${systemPrompt.length} chars, ~${Math.ceil(systemPrompt.length / 4)} tokens`);
+
+    // ── Main LLM call ──
+    const history = getHistory(interaction.user.id);
+    const result = await callLLM(systemPrompt, history, enrichedMessage);
 
     // Strip position/school annotations the model sometimes adds (e.g. "Name (QB)" → "Name")
     if (result.board) {
@@ -327,19 +499,37 @@ export async function execute(
 
     if (result.action === 'answer_question') {
       const answer = result.answer ?? result.explanation ?? 'No answer provided.';
-      const truncated = answer.length > 4000 ? answer.slice(0, 3997) + '...' : answer;
 
       // Save to history for follow-up
       addToHistory(interaction.user.id, 'user', userMessage);
       addToHistory(interaction.user.id, 'assistant', JSON.stringify(result));
 
-      const embed = new EmbedBuilder()
-        .setColor(TEAMS[userTeam]?.color ?? 0x5865F2)
-        .setTitle('Scout Report')
-        .setDescription(truncated)
-        .setFooter({ text: 'Follow up with /board-ai to ask more or apply changes to your board.' });
+      // Split into 2000-char chunks, breaking at newlines and keeping code fences balanced
+      const chunks: string[] = [];
+      let remaining = answer;
+      while (remaining.length > 0) {
+        if (remaining.length <= 2000) {
+          chunks.push(remaining);
+          break;
+        }
+        let splitAt = remaining.lastIndexOf('\n', 2000);
+        if (splitAt < 500) splitAt = 2000;
+        let chunk = remaining.slice(0, splitAt);
+        remaining = remaining.slice(splitAt).replace(/^\n/, '');
 
-      await interaction.editReply({ embeds: [embed] });
+        // If chunk has an unclosed code fence, close it and re-open in the next chunk
+        const fenceCount = (chunk.match(/^```/gm) || []).length;
+        if (fenceCount % 2 !== 0) {
+          chunk += '\n```';
+          remaining = '```\n' + remaining;
+        }
+        chunks.push(chunk);
+      }
+
+      await interaction.editReply(chunks[0]);
+      for (let i = 1; i < chunks.length; i++) {
+        await interaction.followUp({ content: chunks[i], ephemeral: true });
+      }
       return;
     }
 
@@ -366,7 +556,7 @@ export async function execute(
       // Show the board inline
       const { entries, total, totalPages, page } = manager.getMyBoardPage(userTeam, 1);
       const priority = manager.getPositionPriority(userTeam);
-      const embed = buildMyBoardEmbed(teamName, entries, page, totalPages, total, priority);
+      const embed = buildMyBoardEmbed(teamName, entries, page, totalPages, total, priority, isBeastAvailable() ? getBeastRanking : undefined);
 
       clearHistory(interaction.user.id);
       await interaction.editReply({ content: reply, embeds: [embed] });
@@ -419,10 +609,19 @@ export async function execute(
     const message = err instanceof Error ? err.message : String(err);
     if (message.includes('ECONNREFUSED') || message.includes('fetch failed')) {
       await interaction.editReply('❌ Could not connect to Ollama. Make sure the Ollama server is running and `OLLAMA_HOST` is correct.');
+    } else if (message.includes('Invalid JSON from LLM:') && message.includes('<!DOCTYPE')) {
+      await interaction.editReply(
+        '❌ **Request timed out** — the AI took too long to respond.\n\n' +
+        'Tips to avoid this:\n' +
+        '- Ask about fewer players at a time (e.g. "first 20" instead of "all 100")\n' +
+        '- Ask about a specific position group instead of the whole board\n' +
+        '- Keep follow-up questions simple (e.g. "compare their 40 times")\n' +
+        '- Avoid asking for full scouting reports on large groups'
+      );
+      console.error('[board-ai] Cloudflare 524 timeout');
     } else {
       const truncMsg = message.slice(0, 1800);
       await interaction.editReply(`❌ AI error: ${truncMsg}`);
-      // Log full prompt for debugging
       console.error('[board-ai] Error:', message);
       console.error('[board-ai] System prompt sent:', systemPrompt.slice(0, 2000), '...');
     }

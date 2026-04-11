@@ -190,6 +190,12 @@ export const data = new SlashCommandBuilder()
       .setName('pick')
       .setDescription('Make a pick for the team currently on the clock (admin only)')
       .addStringOption(opt => opt
+        .setName('player')
+        .setDescription('Player name (start typing to search)')
+        .setRequired(true)
+        .setAutocomplete(true)
+      )
+      .addStringOption(opt => opt
         .setName('position')
         .setDescription('Filter by position (default: All)')
         .setRequired(false)
@@ -211,12 +217,6 @@ export const data = new SlashCommandBuilder()
           { name: 'K',    value: 'K'    },
           { name: 'P',    value: 'P'    },
         )
-      )
-      .addStringOption(opt => opt
-        .setName('player')
-        .setDescription('Player name (start typing to search)')
-        .setRequired(true)
-        .setAutocomplete(true)
       )
     )
   );

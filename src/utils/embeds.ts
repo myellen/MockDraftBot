@@ -95,10 +95,19 @@ export function buildMyBoardEmbed(
   page: number,
   totalPages: number,
   total: number,
-  positionPriority: string[]
+  positionPriority: string[],
+  beastLookup?: (name: string) => { pos: string; posRank: number; ovrRank: number | null; grade: string } | null,
 ): EmbedBuilder {
   const rows = entries.map(e => {
-    const line = `**${e.boardPos}.** \`#${String(e.rank).padStart(3, ' ')}\` ${e.name} — ${e.pos}, ${e.school}`;
+    let beastTag = '';
+    if (beastLookup) {
+      const b = beastLookup(e.name);
+      if (b) {
+        const ovrStr = b.ovrRank ? `#${b.ovrRank}` : '—';
+        beastTag = ` · ${b.pos}${b.posRank} (${ovrStr})`;
+      }
+    }
+    const line = `**${e.boardPos}.** ${e.name} — ${e.pos}, ${e.school}${beastTag}`;
     return e.available ? line : `~~${line}~~`;
   }).join('\n');
 

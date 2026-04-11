@@ -7,6 +7,12 @@ export const data = new SlashCommandBuilder()
   .setName('pick')
   .setDescription('Make your draft pick when your team is on the clock')
   .addStringOption(opt => opt
+    .setName('player')
+    .setDescription('Player name (start typing to search)')
+    .setRequired(true)
+    .setAutocomplete(true)
+  )
+  .addStringOption(opt => opt
     .setName('position')
     .setDescription('Filter by position (default: All)')
     .setRequired(false)
@@ -28,12 +34,6 @@ export const data = new SlashCommandBuilder()
       { name: 'K',    value: 'K'    },
       { name: 'P',    value: 'P'    },
     )
-  )
-  .addStringOption(opt => opt
-    .setName('player')
-    .setDescription('Player name (start typing to search)')
-    .setRequired(true)
-    .setAutocomplete(true)
   );
 
 export async function execute(
