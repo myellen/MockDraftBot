@@ -192,7 +192,7 @@ export const data = new SlashCommandBuilder()
       .addStringOption(opt => opt
         .setName('position')
         .setDescription('Filter by position (default: All)')
-        .setRequired(true)
+        .setRequired(false)
         .addChoices(
           { name: 'All',  value: 'ALL'  },
           { name: 'QB',   value: 'QB'   },
@@ -313,6 +313,15 @@ export async function execute(
           .setColor(team.color)
           .setTitle('🏈 Team Registered!')
           .setDescription(`<@${interaction.user.id}> is now the GM of the **${team.name}**!`)
+          .addFields({
+            name: 'What\'s next?',
+            value:
+              '`/board submit` — upload your custom draft board\n' +
+              '`/board priority` — set position priority for auto-picks\n' +
+              '`/inventory` — view your team\'s picks and roster\n\n' +
+              'The draft will start when an admin runs `/draft start`. You\'ll be pinged when it\'s your turn!',
+            inline: false,
+          })
       ]
     });
 

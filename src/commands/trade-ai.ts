@@ -213,7 +213,7 @@ export async function execute(
 
   const userTeam = manager.getUserTeam(interaction.user.id);
   if (!userTeam) {
-    await interaction.reply({ content: '❌ You need a registered team to propose trades.', ephemeral: true });
+    await interaction.reply({ content: '❌ You need a registered team to propose trades. Use `/draft register` to claim one.', ephemeral: true });
     return;
   }
 
