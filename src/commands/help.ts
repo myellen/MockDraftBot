@@ -101,10 +101,11 @@ export async function execute(
       {
         name: '9️⃣ AI Draft Board — `/board-ai`',
         value:
-          'Describe your draft strategy in plain English and let the AI build or adjust your board.\n' +
-          '> `/board-ai description:` — e.g. "prioritize edge rushers and corners" or "draft for need"\n' +
-          '> `/board-ai description: file:` — upload a `.txt` or `.csv` file with player names and the AI will process it along with your instructions\n' +
-          'The AI knows your roster, drafted players, and available prospects. It remembers your recent instructions across calls to refine your board over time.',
+          'Ask questions about prospects or describe board changes in plain English.\n' +
+          '> `/board-ai description:` — ask a question like "who are the best EDGE rushers?" or "compare the top QBs"\n' +
+          '> `/board-ai description:` — give an instruction like "prioritize edge rushers and corners" or "draft for need"\n' +
+          '> `/board-ai description: file:` — upload a `.txt` or `.csv` file with player names\n' +
+          'The AI knows your roster, drafted players, and available prospects. It remembers your conversation — ask about prospects first, then follow up with "put those on my board."',
         inline: false,
       },
       {
