@@ -59,7 +59,7 @@ export async function execute(
     ? INSIDERS.find(i => i.name === insiderName) ?? INSIDERS[Math.floor(Math.random() * INSIDERS.length)]
     : INSIDERS[Math.floor(Math.random() * INSIDERS.length)];
 
-  await interaction.deferReply();
+  await interaction.deferReply({ ephemeral: true });
 
   try {
     // Build draft context so the reporter can ground the leak in reality
@@ -105,7 +105,8 @@ export async function execute(
       .setFooter({ text: '𝕏' })
       .setTimestamp();
 
-    await interaction.editReply({ embeds: [embed] });
+    await interaction.editReply('🤫 Your leak has been anonymized and passed to an insider. Only they know who talked.');
+    await interaction.followUp({ embeds: [embed] });
 
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

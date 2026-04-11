@@ -67,21 +67,28 @@ export async function execute(
     ]
   });
 
-  // Announce who is now on the clock
-  const nextSlot = manager.getCurrentSlot();
-  if (nextSlot) {
-    const nextTeam = TEAMS[nextSlot.currentTeam];
-    const pings = manager.getTeamPings(nextSlot.currentTeam);
-    const gmLabel = manager.getTeamGMLabel(nextSlot.currentTeam);
-    await interaction.followUp({
-      content: pings,
-      embeds: [
-        new EmbedBuilder()
-          .setColor(nextTeam?.color ?? 0xFFB612)
-          .setTitle(`🏈 ${nextTeam?.name ?? nextSlot.currentTeam} are on the clock!`)
-          .setDescription(`${gmLabel} — Round ${nextSlot.round}, Pick ${nextSlot.roundPick} · Overall #${nextSlot.overall}`)
-      ]
-    });
+  // If this pick ended the draft, send completion embeds
+  if (result.completionEmbeds?.length) {
+    for (let i = 0; i < result.completionEmbeds.length; i += 10) {
+      await interaction.followUp({ embeds: result.completionEmbeds.slice(i, i + 10) });
+    }
+  } else {
+    // Announce who is now on the clock
+    const nextSlot = manager.getCurrentSlot();
+    if (nextSlot) {
+      const nextTeam = TEAMS[nextSlot.currentTeam];
+      const pings = manager.getTeamPings(nextSlot.currentTeam);
+      const gmLabel = manager.getTeamGMLabel(nextSlot.currentTeam);
+      await interaction.followUp({
+        content: pings,
+        embeds: [
+          new EmbedBuilder()
+            .setColor(nextTeam?.color ?? 0xFFB612)
+            .setTitle(`🏈 ${nextTeam?.name ?? nextSlot.currentTeam} are on the clock!`)
+            .setDescription(`${gmLabel} — Round ${nextSlot.round}, Pick ${nextSlot.roundPick} · Overall #${nextSlot.overall}`)
+        ]
+      });
+    }
   }
 }
 

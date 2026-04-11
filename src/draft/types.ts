@@ -116,6 +116,7 @@ export interface PickResult {
   success: boolean;
   error?: string;
   pick?: CompletedPick;
+  completionEmbeds?: import('discord.js').EmbedBuilder[];  // set when this pick ends the draft
 }
 
 export interface RegisterResult {

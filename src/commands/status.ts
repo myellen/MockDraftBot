@@ -25,7 +25,7 @@ export async function execute(
     gmLabel === '_unassigned_' ? null : gmLabel,
     timeRemaining,
     lastPicks,
-    state.schedule.length,
+    state.schedule.filter(s => s.round <= (state.config.rounds ?? 7)).length,
     state.picks.length
   );
 

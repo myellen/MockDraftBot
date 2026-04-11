@@ -284,13 +284,12 @@ export class DraftManager {
     }
 
     this.clearTimer();
-    const prospect = PROSPECT_BY_RANK.get(prospectRank)!;
     const pick = await this.recordAndAnnounce(slot, prospectRank, userId, false);
     this.state.currentPickIndex++;
     await this.persist();
-    await this.advance();
+    const completionEmbeds = await this.advance();
 
-    return { success: true, pick };
+    return { success: true, pick, completionEmbeds };
   }
 
   async adminMakePick(prospectRank: number): Promise<PickResult> {
@@ -308,9 +307,9 @@ export class DraftManager {
     const pick = await this.recordAndAnnounce(slot, prospectRank, 'admin', false);
     this.state.currentPickIndex++;
     await this.persist();
-    await this.advance();
+    const completionEmbeds = await this.advance();
 
-    return { success: true, pick };
+    return { success: true, pick, completionEmbeds };
   }
 
   // ─── Custom Board / Position Priority ────────────────────────────────────
@@ -437,9 +436,9 @@ export class DraftManager {
     const pick = await this.recordAndAnnounce(slot, bestRank, userId, true);
     this.state.currentPickIndex++;
     await this.persist();
-    await this.advance();
+    const completionEmbeds = await this.advance();
 
-    return { success: true, pick };
+    return { success: true, pick, completionEmbeds };
   }
 
   private async recordAndAnnounce(
@@ -481,7 +480,7 @@ export class DraftManager {
 
   // ─── Advance ──────────────────────────────────────────────────────────────
 
-  private async advance(): Promise<void> {
+  private async advance(): Promise<import('discord.js').EmbedBuilder[] | undefined> {
     const maxRounds = this.state.config.rounds ?? 7;
     while (true) {
       const slot = this.state.schedule[this.state.currentPickIndex];
@@ -490,9 +489,13 @@ export class DraftManager {
         this.state.status = 'complete';
         this.state.timerExpiresAt = null;
         await this.persist();
-        await this.sendEmbed(buildDraftCompleteEmbed(this.state.picks, this.state.picks.length));
-        await this.sendTeamSummaries();
-        return;
+        // Return embeds for the caller to send as follow-ups
+        const embeds: import('discord.js').EmbedBuilder[] = [];
+        embeds.push(buildDraftCompleteEmbed(this.state.picks, this.state.picks.length));
+        for (const abbr of Object.keys(TEAMS)) {
+          embeds.push(buildTeamRosterEmbed(TEAMS[abbr], abbr, this.state.picks.filter(p => p.team === abbr), this.state.tradeHistory, this.state.schedule));
+        }
+        return embeds;
       }
       const userId = this.state.assignments[slot.currentTeam] ?? null;
 
@@ -541,7 +544,13 @@ export class DraftManager {
     if (this.state.status !== 'active') return;
     console.log(`⏰ Timer expired for pick ${this.state.currentPickIndex + 1}`);
     this.state.timerExpiresAt = null;
-    await this.autoPick(null);
+    const result = await this.autoPick(null);
+    // If this autopick ended the draft, send completion via channel (no interaction available)
+    if (result.completionEmbeds?.length) {
+      for (let i = 0; i < result.completionEmbeds.length; i += 10) {
+        await this.sendEmbeds(result.completionEmbeds.slice(i, i + 10));
+      }
+    }
   }
 
   private restoreTimer(): void {
@@ -587,6 +596,21 @@ export class DraftManager {
       await this.sendEmbeds(embeds);
       if (i + 10 < teamAbbrs.length) await delay(800);
     }
+  }
+
+  /** Manually end the draft. Returns completion + team summary embeds for the caller to send. */
+  async endDraft(): Promise<import('discord.js').EmbedBuilder[]> {
+    this.state.status = 'complete';
+    this.state.timerExpiresAt = null;
+    this.clearTimer();
+    await this.persist();
+
+    const embeds: import('discord.js').EmbedBuilder[] = [];
+    embeds.push(buildDraftCompleteEmbed(this.state.picks, this.state.picks.length));
+    for (const abbr of Object.keys(TEAMS)) {
+      embeds.push(buildTeamRosterEmbed(TEAMS[abbr], abbr, this.state.picks.filter(p => p.team === abbr), this.state.tradeHistory, this.state.schedule));
+    }
+    return embeds;
   }
 
   // ─── Queries ──────────────────────────────────────────────────────────────

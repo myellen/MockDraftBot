@@ -28,4 +28,10 @@ export async function execute(
         .setDescription(`**${pick.prospectName}** (${pick.pos}, ${pick.school})\nRound ${pick.round}, Pick ${pick.roundPick} · Overall #${pick.overall}`)
     ]
   });
+
+  if (result.completionEmbeds?.length) {
+    for (let i = 0; i < result.completionEmbeds.length; i += 10) {
+      await interaction.followUp({ embeds: result.completionEmbeds.slice(i, i + 10) });
+    }
+  }
 }

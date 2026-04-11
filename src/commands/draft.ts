@@ -101,6 +101,10 @@ export const data = new SlashCommandBuilder()
     .setDescription('Wipe ALL state including assignments, boards, and config (admin only)')
   )
   .addSubcommand(sub => sub
+    .setName('end')
+    .setDescription('Manually end the draft and send completion messages (admin only)')
+  )
+  .addSubcommand(sub => sub
     .setName('rewind')
     .setDescription('Rewind the draft to a specific pick (admin only)')
     .addIntegerOption(opt => opt
@@ -217,10 +221,17 @@ export const data = new SlashCommandBuilder()
     )
   );
 
-async function followUpOnTheClock(
+async function followUpAfterPick(
   interaction: ChatInputCommandInteraction,
-  manager: DraftManager
+  manager: DraftManager,
+  result: { completionEmbeds?: import('discord.js').EmbedBuilder[] }
 ): Promise<void> {
+  if (result.completionEmbeds?.length) {
+    for (let i = 0; i < result.completionEmbeds.length; i += 10) {
+      await interaction.followUp({ embeds: result.completionEmbeds.slice(i, i + 10) });
+    }
+    return;
+  }
   const nextSlot = manager.getCurrentSlot();
   if (!nextSlot) return;
   const nextTeam = TEAMS[nextSlot.currentTeam];
@@ -244,7 +255,7 @@ export async function execute(
   const sub = interaction.options.getSubcommand();
 
   // Admin-only commands
-  const adminCmds = ['setup', 'start', 'pause', 'resume', 'reset', 'rewind', 'wipe'];
+  const adminCmds = ['setup', 'start', 'pause', 'resume', 'reset', 'rewind', 'wipe', 'end'];
   if (adminCmds.includes(sub) && !isAdmin(interaction)) {
     await interaction.reply({ content: '❌ You need Administrator permission to use this command.', ephemeral: true });
     return;
@@ -335,6 +346,21 @@ export async function execute(
     await interaction.deferReply({ ephemeral: true });
     await manager.resume();
     await interaction.editReply('▶️ Draft resumed.');
+
+  } else if (sub === 'end') {
+    await interaction.deferReply({ ephemeral: true });
+    const state = manager.getState();
+    if (state.status === 'complete' || state.status === 'active' || state.status === 'paused') {
+      const embeds = await manager.endDraft();
+      await interaction.editReply('✅ Draft ended.');
+      // Send embeds in batches of 10 (Discord limit) via followUp
+      for (let i = 0; i < embeds.length; i += 10) {
+        const batch = embeds.slice(i, i + 10);
+        await interaction.followUp({ embeds: batch });
+      }
+    } else {
+      await interaction.editReply('❌ No draft to end.');
+    }
 
   } else if (sub === 'reset') {
     await manager.reset();
@@ -427,7 +453,7 @@ export async function execute(
             .setDescription(`**${pick.prospectName}** (${pick.pos}, ${pick.school})\nRound ${pick.round}, Pick ${pick.roundPick} · Overall #${pick.overall}\n*(admin auto-pick)*`)
         ]
       });
-      await followUpOnTheClock(interaction, manager);
+      await followUpAfterPick(interaction, manager, result);
 
     } else if (sub === 'pick') {
       const rankStr = interaction.options.getString('player', true);
@@ -453,7 +479,7 @@ export async function execute(
         ]
       });
 
-      await followUpOnTheClock(interaction, manager);
+      await followUpAfterPick(interaction, manager, result);
     }
   }
 }
