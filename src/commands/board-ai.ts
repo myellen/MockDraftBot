@@ -236,8 +236,8 @@ ${rosterStr}
 These picks have already been made for this team in the current draft:
 ${draftedStr}
 
-## Available Prospects (by composite score)
-These are the top prospects still available, ranked by the scoring engine:
+## Available Prospects (sorted by composite score)
+These are the prospects still available to be drafted, sorted by the scoring engine's composite ranking (best first):
 ${prospectsStr}
 
 ## Current Custom Board
@@ -463,9 +463,9 @@ export async function execute(
       ? '🏈 Building your board...'
       : '🏈 Processing your request...');
 
-    // Use top 50 by composite score if scoring ran, otherwise full list
+    // Full prospect pool sorted by composite score (if scoring ran) or raw rank
     const prospectPool: Array<{ rank: number; name: string; pos: string; school: string }> = scored.length > 0
-      ? scored.slice(0, 50).map(sp => ({
+      ? scored.map(sp => ({
           rank: sp.prospect.rank,
           name: sp.prospect.name,
           pos: sp.prospect.pos,
@@ -474,23 +474,6 @@ export async function execute(
       : allAvailable.map((p: { rank: number; name: string; pos: string; school: string }) => ({
           rank: p.rank, name: p.name, pos: p.pos, school: p.school,
         }));
-
-    // If user mentions specific player names, ensure those are in the pool
-    // even if they're outside the top 50
-    if (scored.length > 50) {
-      const poolRanks = new Set(prospectPool.map(p => p.rank));
-      const descLower = description.toLowerCase();
-      for (const sp of scored.slice(50)) {
-        if (descLower.includes(sp.prospect.name.toLowerCase()) && !poolRanks.has(sp.prospect.rank)) {
-          prospectPool.push({
-            rank: sp.prospect.rank,
-            name: sp.prospect.name,
-            pos: sp.prospect.pos,
-            school: sp.prospect.school,
-          });
-        }
-      }
-    }
 
     boardPrompt = buildBoardSystemPrompt(
       userTeam,
