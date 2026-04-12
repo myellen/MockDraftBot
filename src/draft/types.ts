@@ -108,8 +108,8 @@ export interface DraftState {
 
 export interface BoardData {
   customBoards: Record<string, number[]>;      // teamAbbr -> ordered prospect ranks (GM-submitted)
-  positionPriority: Record<string, string[]>;  // teamAbbr -> ordered position list for autopick
   strategyNotes: Record<string, string[]>;     // teamAbbr -> last N board-ai instructions for LLM memory
+  strategyPrompts: Record<string, string>;     // teamAbbr -> distilled strategy prompt for autopick AI
 }
 
 export interface PickResult {

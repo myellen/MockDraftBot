@@ -12,6 +12,8 @@ import { PROSPECTS_DEDUPED, PROSPECT_BY_RANK } from '../data/prospects';
 import { TEAMS } from '../data/teams';
 import { ROSTERS } from '../data/rosters';
 import { buildPickEmbed, buildOnTheClockEmbed, buildDraftCompleteEmbed, buildTeamRosterEmbed } from '../utils/embeds';
+import { isOllamaConfigured } from '../llm/OllamaService';
+import { smartAutopick } from '../llm/SmartAutopick';
 
 export { formatCapAmount } from './TradeManager';
 
@@ -25,8 +27,8 @@ function boardPath(guildId: string): string {
 
 const DEFAULT_BOARD_DATA: BoardData = {
   customBoards: {},
-  positionPriority: {},
   strategyNotes: {},
+  strategyPrompts: {},
 };
 
 function buildFuturePickRights(): FuturePickRight[] {
@@ -137,8 +139,8 @@ export class DraftManager {
       const parsed = JSON.parse(raw) as BoardData;
       boardData = {
         customBoards: parsed.customBoards ?? {},
-        positionPriority: parsed.positionPriority ?? {},
-        strategyNotes: (parsed as any).strategyNotes ?? {},
+        strategyNotes: parsed.strategyNotes ?? {},
+        strategyPrompts: (parsed as any).strategyPrompts ?? {},
       };
     } catch {
       boardData = { ...DEFAULT_BOARD_DATA };
@@ -312,26 +314,40 @@ export class DraftManager {
     return { success: true, pick, completionEmbeds };
   }
 
-  // ─── Custom Board / Position Priority ────────────────────────────────────
+  // ─── Custom Board / Strategy ─────────────────────────────────────────────
 
-  /** Fallback chain: custom board → position priority → default rank order */
-  private getBestPickForTeam(teamAbbr: string): number | undefined {
+  /** Fallback chain: smart pick (LLM) → custom board → BPA (default rank order) */
+  private async getBestPickForTeam(teamAbbr: string): Promise<number | undefined> {
     const available = new Set(this.state.availableRanks);
 
+    // 1. Smart pick via LLM (when Ollama is available)
+    if (isOllamaConfigured()) {
+      const slot = this.state.schedule[this.state.currentPickIndex];
+      const draftedByTeam = this.state.picks
+        .filter(p => p.team === teamAbbr)
+        .map(p => ({ name: p.prospectName, pos: p.pos }));
+      const posCounts: Record<string, number> = {};
+      for (const p of draftedByTeam) {
+        posCounts[p.pos] = (posCounts[p.pos] || 0) + 1;
+      }
+      const smartRank = await smartAutopick(teamAbbr, this.boardData.strategyPrompts[teamAbbr], {
+        availableRanks: this.state.availableRanks,
+        boardRanks: this.boardData.customBoards[teamAbbr] ?? [],
+        draftedByTeam,
+        rosterPosCounts: posCounts,
+        pickInfo: { round: slot.round, roundPick: slot.roundPick, overall: slot.overall },
+      });
+      if (smartRank !== undefined && available.has(smartRank)) return smartRank;
+    }
+
+    // 2. Custom board fallback (when Ollama unavailable or LLM failed)
     const board = this.boardData.customBoards[teamAbbr];
     if (board?.length) {
       const pick = board.find(rank => available.has(rank));
       if (pick !== undefined) return pick;
     }
 
-    const priority = this.boardData.positionPriority[teamAbbr];
-    if (priority?.length) {
-      for (const pos of priority) {
-        const pick = this.state.availableRanks.find(rank => PROSPECT_BY_RANK.get(rank)?.pos === pos);
-        if (pick !== undefined) return pick;
-      }
-    }
-
+    // 3. BPA (default rank order)
     return this.state.availableRanks[0];
   }
 
@@ -353,14 +369,9 @@ export class DraftManager {
     return { matched: ranks.length, unmatched };
   }
 
-  setPositionPriority(teamAbbr: string, positions: string[]): void {
-    this.boardData.positionPriority[teamAbbr] = positions;
-    void this.persistBoards();
-  }
-
-  clearBoard(teamAbbr: string, what: 'board' | 'priority' | 'all'): void {
+  clearBoard(teamAbbr: string, what: 'board' | 'strategy' | 'all'): void {
     if (what === 'board' || what === 'all') delete this.boardData.customBoards[teamAbbr];
-    if (what === 'priority' || what === 'all') delete this.boardData.positionPriority[teamAbbr];
+    if (what === 'strategy' || what === 'all') delete this.boardData.strategyPrompts[teamAbbr];
     if (what === 'all') delete this.boardData.strategyNotes[teamAbbr];
     void this.persistBoards();
   }
@@ -369,8 +380,18 @@ export class DraftManager {
     return this.boardData.customBoards[teamAbbr] ?? [];
   }
 
-  getPositionPriority(teamAbbr: string): string[] {
-    return this.boardData.positionPriority[teamAbbr] ?? [];
+  getStrategyPrompt(teamAbbr: string): string | undefined {
+    return this.boardData.strategyPrompts[teamAbbr];
+  }
+
+  setStrategyPrompt(teamAbbr: string, prompt: string): void {
+    this.boardData.strategyPrompts[teamAbbr] = prompt;
+    void this.persistBoards();
+  }
+
+  clearStrategyPrompt(teamAbbr: string): void {
+    delete this.boardData.strategyPrompts[teamAbbr];
+    void this.persistBoards();
   }
 
   getStrategyNotes(teamAbbr: string): string[] {
@@ -429,7 +450,7 @@ export class DraftManager {
       return { success: false, error: `It's not your pick. The **${onClock}** are on the clock.` };
     }
 
-    const bestRank = this.getBestPickForTeam(slot.currentTeam);
+    const bestRank = await this.getBestPickForTeam(slot.currentTeam);
     if (bestRank === undefined) return { success: false, error: 'No prospects available.' };
 
     this.clearTimer();
@@ -501,7 +522,7 @@ export class DraftManager {
 
       if (!userId && this.state.config.autoPick) {
         // CPU pick — pick best available immediately
-        const bestRank = this.getBestPickForTeam(slot.currentTeam);
+        const bestRank = await this.getBestPickForTeam(slot.currentTeam);
         if (bestRank === undefined) break;
         await this.recordAndAnnounce(slot, bestRank, null, true);
         this.state.currentPickIndex++;
@@ -981,7 +1002,7 @@ export class DraftManager {
 
     if (!userId && this.state.config.autoPick) {
       // New owner is CPU — pick immediately
-      const bestRank = this.getBestPickForTeam(slot.currentTeam);
+      const bestRank = await this.getBestPickForTeam(slot.currentTeam);
       if (bestRank === undefined) return;
       await this.recordAndAnnounce(slot, bestRank, null, true);
       this.state.currentPickIndex++;

@@ -37,6 +37,27 @@ export function isOllamaConfigured(): boolean {
 }
 
 /**
+ * Batch-embed one or more texts using the local embedding model.
+ * Uses a separate local Ollama instance (OLLAMA_EMBED_HOST, default localhost:11434)
+ * with the model specified by OLLAMA_EMBED_MODEL (default nomic-embed-text).
+ */
+let embedClient: Ollama | null = null;
+
+function getEmbedClient(): Ollama {
+  if (embedClient) return embedClient;
+  const host = process.env.OLLAMA_EMBED_HOST || 'http://localhost:11434';
+  embedClient = new Ollama({ host });
+  return embedClient;
+}
+
+export async function embed(input: string | string[]): Promise<number[][]> {
+  const client = getEmbedClient();
+  const model = process.env.OLLAMA_EMBED_MODEL || 'nomic-embed-text';
+  const response = await client.embed({ model, input });
+  return response.embeddings;
+}
+
+/**
  * Send a chat completion request and parse the response as JSON.
  * Uses format: 'json' to instruct Ollama to return valid JSON.
  */

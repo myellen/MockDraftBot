@@ -2,6 +2,8 @@ import 'dotenv/config';
 import { Client, GatewayIntentBits, Events } from 'discord.js';
 import { DraftManager } from './draft/DraftManager';
 import { commandMap } from './commands/index';
+import { isOllamaConfigured } from './llm/OllamaService';
+import { buildIndex as buildEmbeddingIndex } from './llm/EmbeddingService';
 
 const token = process.env.DISCORD_TOKEN;
 if (!token) throw new Error('Missing DISCORD_TOKEN in environment');
@@ -42,6 +44,13 @@ client.once(Events.ClientReady, async (c) => {
     } catch (err) {
       console.error(`Failed to pre-fetch users for guild ${guildId}:`, err);
     }
+  }
+
+  // Build RAG embedding index in background (non-blocking)
+  if (isOllamaConfigured()) {
+    buildEmbeddingIndex().catch(err =>
+      console.error('[EmbeddingService] Failed to build index:', err)
+    );
   }
 });
 

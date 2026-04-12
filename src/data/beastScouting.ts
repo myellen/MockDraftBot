@@ -8,6 +8,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { Tool } from 'ollama';
+import { search as ragSearchIndex, isReady as isRagReady } from '../llm/EmbeddingService';
 
 interface CompactMeasurements {
   ht?: string;
@@ -57,8 +58,210 @@ function load(): CompactProspect[] {
   return prospects!;
 }
 
+// ── Measurement parsers (internal) ──
+
+/** Convert height string like "6'4\"" or "6'4 2/8\"" to total inches. */
+function parseHeight(s: string | undefined | null): number | null {
+  if (!s) return null;
+  const m = s.match(/(\d+)'(\d+)(?:\s+(\d+)\/(\d+))?/);
+  if (!m) return null;
+  const feet = parseInt(m[1]);
+  const inches = parseInt(m[2]);
+  const frac = m[3] && m[4] ? parseInt(m[3]) / parseInt(m[4]) : 0;
+  return feet * 12 + inches + frac;
+}
+
+/** Convert fractional measurement string like "9 1/2", "32 3/4", "35" to decimal. */
+function parseFractional(s: string | number | undefined | null): number | null {
+  if (s === undefined || s === null) return null;
+  if (typeof s === 'number') return s;
+  const m = s.match(/(\d+)(?:\s+(\d+)\/(\d+))?/);
+  if (!m) return null;
+  const whole = parseInt(m[1]);
+  const frac = m[2] && m[3] ? parseInt(m[2]) / parseInt(m[3]) : 0;
+  return whole + frac;
+}
+
+/** Convert broad jump string like "10'09\"" or "09'07\" DN" to total inches. */
+function parseBroadJump(s: string | undefined | null): number | null {
+  if (!s) return null;
+  // Strip trailing annotations (DN, D, numbers after closing quote)
+  const cleaned = s.replace(/"\s*.*$/, '"');
+  const m = cleaned.match(/(\d+)'(\d+)/);
+  if (!m) return null;
+  return parseInt(m[1]) * 12 + parseInt(m[2]);
+}
+
+/** Convert weight to number. Handles string "241" and number passthrough. Nulls corrupted values. */
+function parseWeight(s: string | number | undefined | null): number | null {
+  if (s === undefined || s === null) return null;
+  if (typeof s === 'number') return s;
+  const n = parseInt(s);
+  if (isNaN(n) || n < 100) return null; // corrupted like "3 10"
+  return n;
+}
+
+// ── Field resolver ──
+
+const STRING_MEASUREMENT_PARSERS: Record<string, (s: string | number | undefined | null) => number | null> = {
+  ht: parseHeight as (s: string | number | undefined | null) => number | null,
+  hand: parseFractional,
+  arm: parseFractional,
+  wing: parseFractional,
+  vert: parseFractional,
+  broad: parseBroadJump as (s: string | number | undefined | null) => number | null,
+};
+
+/** Resolve a dot-notation field path on a prospect, auto-parsing measurement strings to numbers. */
+function resolveField(p: CompactProspect, field: string): unknown {
+  // Height/weight shortcuts on main prospect object
+  if (field === 'ht') return parseHeight(p.ht);
+  if (field === 'wt') return parseWeight(p.wt);
+
+  // Simple top-level fields
+  if (!field.includes('.')) return (p as unknown as Record<string, unknown>)[field];
+
+  const [obj, sub] = field.split('.', 2);
+
+  // Stats: resolve from most recent year
+  if (obj === 'stats') {
+    if (!p.stats || p.stats.length === 0) return undefined;
+    return p.stats[p.stats.length - 1][sub];
+  }
+
+  // Combine or proDayDelta
+  const measurements = obj === 'combine' ? p.combine : obj === 'proDayDelta' ? p.proDayDelta : undefined;
+  if (!measurements) return undefined;
+
+  const raw = (measurements as Record<string, unknown>)[sub];
+  if (raw === undefined || raw === null) return null;
+
+  // Auto-parse string measurement fields
+  if (sub in STRING_MEASUREMENT_PARSERS && (typeof raw === 'string' || typeof raw === 'number')) {
+    return STRING_MEASUREMENT_PARSERS[sub](raw as string | number);
+  }
+  // Weight needs special handling (can be number or corrupted string)
+  if (sub === 'wt') return parseWeight(raw as string | number);
+
+  return raw; // already numeric (forty, shuttle, cone, bench)
+}
+
+// ── Structured query system ──
+
+export interface ProspectFilter {
+  field: string;
+  op: 'eq' | 'neq' | 'lt' | 'gt' | 'lte' | 'gte' | 'in' | 'contains';
+  value: string | number | (string | number)[];
+}
+
+export interface ProspectQuery {
+  filters: ProspectFilter[];
+  sort?: { field: string; order: 'asc' | 'desc' };
+  limit?: number;
+}
+
+function matchesFilter(resolved: unknown, filter: ProspectFilter): boolean {
+  const { op, value } = filter;
+
+  // Null/undefined never matches any filter
+  if (resolved === undefined || resolved === null) return false;
+
+  switch (op) {
+    case 'eq':
+      if (typeof resolved === 'string' && typeof value === 'string')
+        return resolved.toLowerCase() === value.toLowerCase();
+      return resolved === value;
+
+    case 'neq':
+      if (typeof resolved === 'string' && typeof value === 'string')
+        return resolved.toLowerCase() !== value.toLowerCase();
+      return resolved !== value;
+
+    case 'lt':  return typeof resolved === 'number' && typeof value === 'number' && resolved < value;
+    case 'gt':  return typeof resolved === 'number' && typeof value === 'number' && resolved > value;
+    case 'lte': return typeof resolved === 'number' && typeof value === 'number' && resolved <= value;
+    case 'gte': return typeof resolved === 'number' && typeof value === 'number' && resolved >= value;
+
+    case 'in':
+      if (!Array.isArray(value)) return false;
+      if (typeof resolved === 'string') {
+        const lower = resolved.toLowerCase();
+        return value.some(v => typeof v === 'string' && v.toLowerCase() === lower);
+      }
+      return value.includes(resolved as string | number);
+
+    case 'contains': {
+      const needle = typeof value === 'string' ? value.toLowerCase() : String(value).toLowerCase();
+      // String field: substring match
+      if (typeof resolved === 'string') return resolved.toLowerCase().includes(needle);
+      // Array field (strengths/weaknesses): check if any element contains the substring
+      if (Array.isArray(resolved)) return resolved.some(item => typeof item === 'string' && item.toLowerCase().includes(needle));
+      return false;
+    }
+
+    default: return false;
+  }
+}
+
+/** Query prospects with flexible filters, sorting, and limits. */
+export function queryProspects(query: ProspectQuery): string {
+  const data = load();
+  const limit = Math.min(query.limit || 50, 100);
+
+  // Filter
+  let results = data.filter(p =>
+    query.filters.every(f => {
+      const resolved = resolveField(p, f.field);
+      return matchesFilter(resolved, f);
+    })
+  );
+
+  // Sort
+  if (query.sort) {
+    const { field, order } = query.sort;
+    results.sort((a, b) => {
+      const va = resolveField(a, field);
+      const vb = resolveField(b, field);
+      // Nulls sort last regardless of order
+      if (va === null || va === undefined) return 1;
+      if (vb === null || vb === undefined) return -1;
+      const cmp = typeof va === 'number' && typeof vb === 'number'
+        ? va - vb
+        : String(va).localeCompare(String(vb));
+      return order === 'desc' ? -cmp : cmp;
+    });
+  }
+
+  const totalMatched = results.length;
+  results = results.slice(0, limit);
+
+  // Light shape (no strengths/weaknesses/summary)
+  const output = results.map(p => ({
+    pos: p.pos, posRank: p.posRank, name: p.name, school: p.school,
+    grade: p.grade, ovrRank: p.ovrRank, ht: p.ht, wt: p.wt,
+    combine: p.combine, proDayDelta: p.proDayDelta, stats: p.stats,
+  }));
+
+  return JSON.stringify({ count: totalMatched, limit, results: output });
+}
+
 export function isAvailable(): boolean {
   return load().length > 0;
+}
+
+/** Return the raw prospect array for external consumers (e.g. EmbeddingService). */
+export function getAllProspectsRaw(): CompactProspect[] {
+  return load();
+}
+
+/** Semantic search against scouting writeups via RAG embeddings.
+ *  Optional posFilter restricts results to a specific position. */
+export async function ragSearch(query: string, topK = 15, posFilter?: string): Promise<string> {
+  if (!isRagReady()) {
+    return JSON.stringify({ results: [], note: 'Embedding index not ready' });
+  }
+  const results = await ragSearchIndex(query, topK, posFilter);
+  return JSON.stringify({ results });
 }
 
 /** Get all prospect names in the Beast dataset. */
@@ -274,6 +477,26 @@ export const BEAST_TOOLS: Tool[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'query_prospects',
+      description: 'Query the scouting database with flexible filters, sorting, and limit. Use for filtered/sorted searches like "EDGEs under 250 with sub-4.5 forties sorted by forty time".',
+      parameters: {
+        type: 'object',
+        properties: {
+          filters: {
+            type: 'string',
+            description: 'JSON array of filter objects [{field, op, value}]. Fields: pos, wt, ht, age, ovrRank, combine.forty, combine.vert, combine.shuttle, combine.cone, combine.bench, combine.hand, combine.arm, stats.sacks, stats.passing_td. Ops: eq, neq, lt, gt, lte, gte, in, contains. Heights in inches (6\'4"=76), weights in pounds.',
+          },
+          sort_field: { type: 'string', description: 'Field to sort by' },
+          sort_order: { type: 'string', enum: ['asc', 'desc'], description: 'Sort direction' },
+          limit: { type: 'number', description: 'Max results (default 50, max 100)' },
+        },
+        required: ['filters'],
+      },
+    },
+  },
 ];
 
 /** Handle a tool call by name. Used as the ToolHandler for chatWithTools. */
@@ -287,6 +510,14 @@ export function handleBeastTool(name: string, args: Record<string, unknown>): Pr
       return Promise.resolve(compareProspects(args.name1 as string, args.name2 as string));
     case 'get_top_prospects':
       return Promise.resolve(getTopProspects(Math.min((args.count as number) || 20, 50)));
+    case 'query_prospects': {
+      const filters = typeof args.filters === 'string' ? JSON.parse(args.filters) : args.filters;
+      return Promise.resolve(queryProspects({
+        filters: Array.isArray(filters) ? filters : [],
+        sort: args.sort_field ? { field: args.sort_field as string, order: (args.sort_order as 'asc' | 'desc') || 'asc' } : undefined,
+        limit: Math.min((args.limit as number) || 50, 100),
+      }));
+    }
     default:
       return Promise.resolve(JSON.stringify({ error: `Unknown tool: ${name}` }));
   }

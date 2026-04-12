@@ -4,7 +4,6 @@ import {
   AutocompleteInteraction,
 } from 'discord.js';
 import { DraftManager } from '../draft/DraftManager';
-import { ALL_POSITIONS } from '../data/prospects';
 import { TEAMS } from '../data/teams';
 import { isAdmin } from '../utils/permissions';
 import { buildBoardEmbed, buildMyBoardEmbed } from '../utils/embeds';
@@ -61,16 +60,6 @@ export const data = new SlashCommandBuilder()
     )
   )
   .addSubcommand(sub => sub
-    .setName('priority')
-    .setDescription('Set autopick position priority (e.g. QB,OT,EDGE,CB)')
-    .addStringOption(opt => opt
-      .setName('positions')
-      .setDescription('Positions in priority order — pick one, then type comma + next to add more')
-      .setRequired(true)
-      .setAutocomplete(true)
-    )
-  )
-  .addSubcommand(sub => sub
     .setName('myboard')
     .setDescription('View your submitted custom board')
     .addIntegerOption(opt => opt
@@ -87,15 +76,15 @@ export const data = new SlashCommandBuilder()
   )
   .addSubcommand(sub => sub
     .setName('clear')
-    .setDescription('Clear your submitted board and/or position priority')
+    .setDescription('Clear your submitted board and/or strategy')
     .addStringOption(opt => opt
       .setName('what')
       .setDescription('What to clear (default: all)')
       .setRequired(false)
       .addChoices(
-        { name: 'Custom board only',     value: 'board'    },
-        { name: 'Position priority only', value: 'priority' },
-        { name: 'Everything',            value: 'all'      },
+        { name: 'Custom board only', value: 'board'    },
+        { name: 'Strategy only',     value: 'strategy' },
+        { name: 'Everything',        value: 'all'      },
       )
     )
   );
@@ -179,29 +168,6 @@ export async function execute(
     return;
   }
 
-  if (sub === 'priority') {
-    const teamAbbr = manager.getUserTeam(interaction.user.id);
-    if (!teamAbbr) {
-      await interaction.reply({ content: '❌ You need a registered team to set position priority. Use `/draft register` to claim one.', ephemeral: true });
-      return;
-    }
-
-    const posStr = interaction.options.getString('positions', true);
-    const positions = posStr.split(',').map(p => p.trim().toUpperCase()).filter(Boolean);
-    const invalid = positions.filter(p => !ALL_POSITIONS.includes(p));
-    if (invalid.length > 0) {
-      await interaction.reply({ content: `❌ Unknown position${invalid.length > 1 ? 's' : ''}: ${invalid.join(', ')}`, ephemeral: true });
-      return;
-    }
-
-    manager.setPositionPriority(teamAbbr, positions);
-    await interaction.reply({
-      content: `✅ Position priority set for **${teamAbbr}**: ${positions.join(' → ')}\nIf your custom board runs out, autopick will target these positions in order.`,
-      ephemeral: true,
-    });
-    return;
-  }
-
   if (sub === 'myboard') {
     const teamAbbr = manager.getUserTeam(interaction.user.id);
     if (!teamAbbr) {
@@ -215,22 +181,22 @@ export async function execute(
       await interaction.reply({ content: 'You have no custom board submitted yet. Use `/board submit` to upload one.', ephemeral: true });
       return;
     }
-    const priority = manager.getPositionPriority(teamAbbr);
+    const strategy = manager.getStrategyPrompt(teamAbbr);
     const teamName = TEAMS[teamAbbr]?.name ?? teamAbbr;
     const beastLookup = isBeastAvailable() ? getBeastRanking : undefined;
 
     if (showAll) {
       // Send each page as its own message (6000 char embed limit per message)
       const firstPage = manager.getMyBoardPage(teamAbbr, 1);
-      const firstEmbed = buildMyBoardEmbed(teamName, firstPage.entries, 1, totalPages, total, priority, beastLookup);
+      const firstEmbed = buildMyBoardEmbed(teamName, firstPage.entries, 1, totalPages, total, strategy, beastLookup);
       await interaction.reply({ embeds: [firstEmbed], ephemeral: true });
       for (let p = 2; p <= totalPages; p++) {
         const pageData = manager.getMyBoardPage(teamAbbr, p);
-        const embed = buildMyBoardEmbed(teamName, pageData.entries, p, totalPages, total, priority, beastLookup);
+        const embed = buildMyBoardEmbed(teamName, pageData.entries, p, totalPages, total, strategy, beastLookup);
         await interaction.followUp({ embeds: [embed], ephemeral: true });
       }
     } else {
-      const embed = buildMyBoardEmbed(teamName, entries, safePage, totalPages, total, priority, beastLookup);
+      const embed = buildMyBoardEmbed(teamName, entries, safePage, totalPages, total, strategy, beastLookup);
       await interaction.reply({ embeds: [embed], ephemeral: true });
     }
     return;
@@ -243,10 +209,10 @@ export async function execute(
       return;
     }
 
-    const what = (interaction.options.getString('what') ?? 'all') as 'board' | 'priority' | 'all';
+    const what = (interaction.options.getString('what') ?? 'all') as 'board' | 'strategy' | 'all';
     manager.clearBoard(teamAbbr, what);
 
-    const label = what === 'board' ? 'custom board' : what === 'priority' ? 'position priority' : 'custom board and position priority';
+    const label = what === 'board' ? 'custom board' : what === 'strategy' ? 'strategy prompt' : 'custom board and strategy';
     await interaction.reply({ content: `✅ Cleared your ${label}. Autopick will use default rank order.`, ephemeral: true });
     return;
   }
@@ -261,29 +227,6 @@ export async function autocomplete(
 
   if (sub === 'submit') {
     await interaction.respond(manager.getTeamChoices(focused));
-    return;
-  }
-
-  if (sub === 'priority') {
-    const parts = focused.split(',');
-    const currentFragment = parts[parts.length - 1].trim().toUpperCase();
-    const prefix = parts.slice(0, -1).map(p => p.trim().toUpperCase()).filter(Boolean);
-    const alreadyPicked = new Set(prefix);
-
-    const teamAbbr = manager.getUserTeam(interaction.user.id);
-    const existingPriority = teamAbbr ? manager.getPositionPriority(teamAbbr) : [];
-
-    const choices = ALL_POSITIONS
-      .filter(pos => !alreadyPicked.has(pos) && pos.includes(currentFragment))
-      .slice(0, 25)
-      .map(pos => {
-        const displayValue = prefix.length > 0 ? `${prefix.join(',')},${pos}` : pos;
-        const isSet = existingPriority.includes(pos);
-        const label = prefix.length > 0 ? `[${prefix.join(', ')}, ${pos}] ${pos}` : pos;
-        return { name: (isSet ? `★ ${label}` : label).slice(0, 100), value: displayValue };
-      });
-
-    await interaction.respond(choices);
     return;
   }
 

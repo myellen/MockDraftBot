@@ -2,7 +2,8 @@
   "customBoards": {
     "BUF": [3, 1, 7, 12, 45, 22]
   },
-  "positionPriority": {
-    "BUF": ["CB", "EDGE", "WR"]
+  "strategyNotes": {},
+  "strategyPrompts": {
+    "BUF": "Prioritize EDGE and CB in the first two rounds. Value athletic upside and speed."
   }
 }

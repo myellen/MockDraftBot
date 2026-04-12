@@ -95,7 +95,7 @@ export function buildMyBoardEmbed(
   page: number,
   totalPages: number,
   total: number,
-  positionPriority: string[],
+  strategyPrompt?: string,
   beastLookup?: (name: string) => { pos: string; posRank: number; ovrRank: number | null; grade: string } | null,
 ): EmbedBuilder {
   const rows = entries.map(e => {
@@ -116,8 +116,8 @@ export function buildMyBoardEmbed(
     .setTitle(`📋 ${teamName} — Custom Board`)
     .setDescription(rows || 'No players on your board yet. Use `/board submit` to upload one.');
 
-  if (positionPriority.length > 0) {
-    embed.addFields({ name: 'Position Priority', value: positionPriority.join(' → '), inline: false });
+  if (strategyPrompt) {
+    embed.addFields({ name: 'Strategy', value: strategyPrompt.length > 200 ? strategyPrompt.slice(0, 197) + '...' : strategyPrompt, inline: false });
   }
 
   embed.setFooter({ text: `Page ${page}/${totalPages} · ${total} players on board · ~~struck through~~ = already drafted` });
