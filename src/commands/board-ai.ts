@@ -2,6 +2,8 @@ import {
   SlashCommandBuilder,
   ChatInputCommandInteraction,
 } from 'discord.js';
+import * as fs from 'fs';
+import * as path from 'path';
 import { DraftManager } from '../draft/DraftManager';
 import { TEAMS } from '../data/teams';
 import { ALL_POSITIONS } from '../data/prospects';
@@ -10,6 +12,32 @@ import { buildMyBoardEmbed } from '../utils/embeds';
 import { isAdmin } from '../utils/permissions';
 import { isAvailable as isBeastAvailable, lookupProspect, lookupProspectLight, lookupByPositionRank, searchByPosition, getTopProspects, getBeastRanking, queryProspects, ragSearch } from '../data/beastScouting';
 import type { ProspectQuery } from '../data/beastScouting';
+
+const PROMPT_LOG_DIR = path.join(process.cwd(), 'logs', 'prompts');
+
+function isPromptLoggingEnabled(): boolean {
+  return process.env.LOG_PROMPTS === '1' || process.env.LOG_PROMPTS === 'true';
+}
+
+function logPromptFile(filename: string, content: string): void {
+  if (!isPromptLoggingEnabled()) return;
+  try {
+    fs.mkdirSync(PROMPT_LOG_DIR, { recursive: true });
+    const filePath = path.join(PROMPT_LOG_DIR, filename);
+    fs.writeFileSync(filePath, content);
+    console.log(`[board-ai] Prompt logged to ${filePath}`);
+  } catch (err) {
+    console.warn('[board-ai] Failed to log prompt:', err instanceof Error ? err.message : err);
+  }
+}
+
+function appendToPromptLog(filename: string, content: string): void {
+  if (!isPromptLoggingEnabled()) return;
+  try {
+    const filePath = path.join(PROMPT_LOG_DIR, filename);
+    fs.appendFileSync(filePath, content);
+  } catch { /* best-effort */ }
+}
 
 export const data = new SlashCommandBuilder()
   .setName('board-ai')
@@ -171,14 +199,13 @@ Answer a question about prospects, team needs, draft strategy, or player compari
 - Be specific — cite prospect names, ranks, positions, and schools from the data above.
 - Keep answers concise but thorough. You can use up to 3000 characters if the question warrants it (e.g. comparing 30 prospects). Don't pad short answers though.
 - **Formatting:** Use Discord markdown (**bold**, *italic*, headers, bullets) for prose. Discord does NOT support markdown tables — for tabular/comparative data, use a code block (\`\`\`) with monospace-aligned columns. Only the table itself should be in the code block; all other text stays outside so markdown renders.
-- **Tables:** Put ALL data in ONE code block table. NEVER use two separate tables or split data across tables. When the user asks for combine numbers, include ALL combine columns (40, Vert, Broad, Shuttle, 3Cone, Bench). When they also ask for grade or stats, add those as extra columns — do NOT drop combine columns to make room. Use short column headers to keep it compact (Grd, 40, Vrt, Brd, Sht, 3C, Bnc, Arm, Hnd, RecTD, RecYd). Example with combine + grade + stats:
+- **Tables:** Only include a table when the user asks for tabular data (combine numbers, measurements, stats, comparisons). Do NOT add combine/measurement tables unless the user specifically asks for them. When you do use a table, put ALL requested data in ONE code block table — never split across two tables. Use short column headers (Grd, 40, Vrt, Brd, Sht, 3C, Bnc, Arm, Hnd, RecTD, RecYd). Include only the columns the user asked for, plus name/position context. If the user asks for combine numbers, include all combine drills — don't drop columns. Show "---" for missing data.
 \`\`\`
 Player            | Grd     | 40   | Vrt  | Brd    | Sht  | 3C   | Bnc | Arm    | Hnd  | RecTD | RecYd
 ------------------|---------|------|------|--------|------|------|-----|--------|------|-------|------
 Name Here         | 2nd Rd  | 4.46 | 35"  | 10'09" | 4.21 | 6.89 | 22  | 32 1/2 | 9 1/2| 11    | 1156
 \`\`\`
-  Show "---" for missing data. You may omit a column ONLY if every player has "---" for it.
-- **Scouting highlights:** When results come from a trait/scouting search, ALWAYS include a "Scouting Highlights" section AFTER the table with bullet points explaining WHY each prospect matched the trait query. Cite Brugler's specific language (e.g. "noted for outstanding suddenness", "violent feet at the top of routes"). This is critical context that distinguishes a trait search from a simple stats query.
+- **Scouting highlights:** When results come from a trait/scouting search, include a "Scouting Highlights" section with bullet points explaining WHY each prospect matched the trait query. Cite Brugler's specific language (e.g. "noted for outstanding suddenness", "violent feet at the top of routes").
 - If the user seems to be asking a question AND implying a board change, answer the question and note they can follow up to apply changes.
 - **Scouting data from Dane Brugler's "The Beast" 2026 NFL Draft Guide may be appended to the user's message.** When present, ALWAYS prefer Beast data over the prospect pool list above. The Beast grades, position ranks (e.g. "EDGE5"), and overall ranks ("OVR #42") are authoritative — they come from the NFL's most respected draft analyst. The pool IDs in the "Available Prospects" list are NOT rankings. When citing a prospect's rank, use the Beast's position rank and overall rank, NOT the pool number.
 - Reference specific Beast scouting insights: cite Brugler's grade (e.g. "2nd round grade"), strengths, weaknesses, and player comparisons.
@@ -315,11 +342,17 @@ Follow-up handling (CRITICAL):
  * Use a fast LLM call to determine what scouting data the main call needs.
  * Falls back to empty data on failure (main LLM can still answer from its context).
  */
+interface ExtractionResult {
+  needs: DataNeeds;
+  extractionPrompt: string;  // the user message sent to extraction LLM
+  extractionRaw: object;     // raw LLM response before sanitization
+}
+
 async function extractDataNeeds(
   description: string,
   userId: string,
   boardNames: string[],
-): Promise<DataNeeds> {
+): Promise<ExtractionResult> {
   const fallback: DataNeeds = { lookups: [], posRanks: [], posLists: [], board: false, topN: 0 };
 
   try {
@@ -348,17 +381,21 @@ async function extractDataNeeds(
     console.log(`[board-ai] Extraction result: ${JSON.stringify(result)}`);
 
     return {
-      lookups: Array.isArray(result.lookups) ? result.lookups.slice(0, 15) : [],
-      posRanks: Array.isArray(result.posRanks) ? result.posRanks.slice(0, 5) : [],
-      posLists: Array.isArray(result.posLists) ? result.posLists.slice(0, 3) : [],
-      board: !!result.board,
-      topN: typeof result.topN === 'number' ? Math.min(result.topN, 30) : 0,
-      query: result.query && Array.isArray(result.query.filters) ? result.query : null,
-      ragQuery: typeof result.ragQuery === 'string' && result.ragQuery.trim() ? result.ragQuery.trim() : null,
+      needs: {
+        lookups: Array.isArray(result.lookups) ? result.lookups.slice(0, 15) : [],
+        posRanks: Array.isArray(result.posRanks) ? result.posRanks.slice(0, 5) : [],
+        posLists: Array.isArray(result.posLists) ? result.posLists.slice(0, 3) : [],
+        board: !!result.board,
+        topN: typeof result.topN === 'number' ? Math.min(result.topN, 30) : 0,
+        query: result.query && Array.isArray(result.query.filters) ? result.query : null,
+        ragQuery: typeof result.ragQuery === 'string' && result.ragQuery.trim() ? result.ragQuery.trim() : null,
+      },
+      extractionPrompt: userMsg,
+      extractionRaw: result,
     };
   } catch (err) {
     console.warn('[board-ai] Extraction call failed, proceeding without pre-fetch:', err instanceof Error ? err.message : err);
-    return fallback;
+    return { needs: fallback, extractionPrompt: '', extractionRaw: {} };
   }
 }
 
@@ -599,10 +636,11 @@ export async function execute(
 
     // ── LLM-powered pre-fetch: extract what scouting data the main call needs ──
     let enrichedMessage = userMessage;
+    let extraction: ExtractionResult | null = null;
     const boardNames = currentBoard.filter(b => b.pos !== '?').map(b => b.name);
     if (isBeastAvailable()) {
-      const needs = await extractDataNeeds(description, interaction.user.id, boardNames);
-      const scoutingCtx = await fetchScoutingData(needs, boardNames);
+      extraction = await extractDataNeeds(description, interaction.user.id, boardNames);
+      const scoutingCtx = await fetchScoutingData(extraction.needs, boardNames);
       if (scoutingCtx) {
         enrichedMessage += scoutingCtx;
         console.log(`[board-ai] Pre-injected ${scoutingCtx.length} chars of Beast scouting data`);
@@ -621,6 +659,61 @@ export async function execute(
     }
 
     console.log(`[board-ai] LLM response: action=${result.action}, board=${result.board?.length ?? 0} names, error=${result.error ?? 'none'}`);
+
+    // ── Log both LLM phases to a single file ──
+    if (isPromptLoggingEnabled()) {
+    const logTs = new Date().toISOString().replace(/[:.]/g, '-');
+    const logFilename = `${logTs}_${userTeam}_${interaction.user.tag}.md`;
+    logPromptFile(logFilename, [
+      `# board-ai — ${new Date().toISOString()}`,
+      `**User:** ${interaction.user.tag} | **Team:** ${userTeam} | **Input:** ${description}`,
+      '',
+      '---',
+      '',
+      '## Phase 1: Extraction LLM',
+      '',
+      '### Extraction System Prompt',
+      '```',
+      EXTRACTION_SYSTEM,
+      '```',
+      '',
+      '### Extraction User Message',
+      '```',
+      extraction?.extractionPrompt ?? '(skipped — Beast data unavailable)',
+      '```',
+      '',
+      '### Extraction Result',
+      '```json',
+      extraction ? JSON.stringify(extraction.extractionRaw, null, 2) : '{}',
+      '```',
+      '',
+      '---',
+      '',
+      '## Phase 2: Main LLM',
+      '',
+      '### System Prompt',
+      '```',
+      systemPrompt,
+      '```',
+      '',
+      '### Conversation History',
+      ...(history.length > 0
+        ? history.map((m, i) => `#### ${m.role} [${i}]\n\`\`\`\n${m.content}\n\`\`\``)
+        : ['(none)']),
+      '',
+      '### User Message (with enriched scouting data)',
+      '```',
+      enrichedMessage,
+      '```',
+      '',
+      '---',
+      '',
+      '## LLM Response',
+      '```json',
+      JSON.stringify(result, null, 2),
+      '```',
+    ].join('\n'));
+    }
 
     if (result.error) {
       await interaction.editReply(`❌ AI couldn't parse your request: ${result.error}`);
