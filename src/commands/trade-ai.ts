@@ -325,15 +325,16 @@ export async function execute(
       return;
     }
 
-    // Find the receiver's userId
+    // Find the receiver's userId (or route to CPU)
     const receiverUserId = state.assignments[result.targetTeam];
-    if (!receiverUserId) {
+    const isCPUTarget = !receiverUserId;
+    if (isCPUTarget && !manager.getConfig().cpuTrading) {
       const msg = `The **${TEAMS[result.targetTeam]?.name}** don't have a registered GM. No one to trade with.`;
       addToHistory(interaction.user.id, 'assistant', msg);
       await interaction.editReply(`❌ ${msg}`);
       return;
     }
-    const receiverPings = manager.getTeamPings(result.targetTeam) ?? `<@${receiverUserId}>`;
+    const receiverPings = receiverUserId ? (manager.getTeamPings(result.targetTeam) ?? `<@${receiverUserId}>`) : '';
 
     // Parse future picks into IDs (supports optional -TEAM suffix e.g. 2027R5-CAR)
     const parseFuturePickStr = (s: string, teamAbbr: string): string | null => {
@@ -391,10 +392,60 @@ export async function execute(
 
     await interaction.editReply(summary);
 
-    // Actually propose the trade
+    // CPU team routing — AI GM evaluates immediately
+    if (isCPUTarget) {
+      const cpuTrade = {
+        id: 'CPU-EVAL',
+        proposerUserId: interaction.user.id,
+        proposerTeam: userTeam,
+        receiverUserId: 'cpu',
+        receiverTeam: result.targetTeam,
+        offeredOveralls: result.offeredPicks ?? [],
+        requestedOveralls: result.requestedPicks ?? [],
+        offeredPlayers: result.offeredPlayers ?? [],
+        requestedPlayers: result.requestedPlayers ?? [],
+        offeredFuturePicks: offeredFutureIds,
+        requestedFuturePicks: requestedFutureIds,
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      };
+
+      const evaluation = await manager.aiGM.evaluateHumanProposal(cpuTrade);
+      if (!evaluation) {
+        await interaction.editReply(summary + `\n\nThe **${targetTeamName}** GM is unavailable.`);
+        return;
+      }
+
+      if (evaluation.decision === 'accept') {
+        const execResult = await manager.trades.executeCPUTrade(cpuTrade);
+        if (execResult.success) {
+          clearHistory(interaction.user.id);
+          await interaction.editReply(summary + `\n\nThe **${targetTeamName}** GM accepted! *"${evaluation.reasoning}"*`);
+        } else {
+          await interaction.editReply(summary + `\n\nThe GM wanted to accept, but: ${execResult.error}`);
+        }
+      } else if (evaluation.decision === 'counter' && evaluation.counterOffer) {
+        const co = evaluation.counterOffer;
+        const fmtPicks = (p: number[]) => p.length ? `picks #${p.join(', #')}` : '';
+        const fmtFut = (f: string[]) => f.length ? `future ${f.join(', ')}` : '';
+        const coOffer = [fmtPicks(co.offeredOveralls), fmtFut(co.offeredFuturePicks)].filter(Boolean).join(' + ') || 'nothing';
+        const coReq = [fmtPicks(co.requestedOveralls), fmtFut(co.requestedFuturePicks)].filter(Boolean).join(' + ') || 'nothing';
+        addToHistory(interaction.user.id, 'assistant', `Counter from ${targetTeamName}: they send ${coOffer}, want ${coReq}`);
+        await interaction.editReply(
+          summary + `\n\nThe **${targetTeamName}** GM countered!\n*"${evaluation.reasoning}"*\n` +
+          `**Counter:** They send ${coOffer}, they want ${coReq}`
+        );
+      } else {
+        addToHistory(interaction.user.id, 'assistant', `${targetTeamName} declined: ${evaluation.reasoning}`);
+        await interaction.editReply(summary + `\n\nThe **${targetTeamName}** GM declined. *"${evaluation.reasoning}"*`);
+      }
+      return;
+    }
+
+    // Actually propose the trade (human target)
     const tradeResult = await manager.trades.proposeTrade(
       interaction.user.id,
-      receiverUserId,
+      receiverUserId!,
       result.offeredPicks ?? [],
       result.requestedPicks ?? [],
       result.offeredPlayers ?? [],

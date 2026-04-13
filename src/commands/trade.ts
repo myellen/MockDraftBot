@@ -235,7 +235,8 @@ export async function execute(
     }
     const receiverTeamAbbr = toTeamAbbr;
     const toUserId = manager.getState().assignments[toTeamAbbr];
-    if (!toUserId) {
+    const isCPUTeam = !toUserId;
+    if (isCPUTeam && !manager.getConfig().cpuTrading) {
       await interaction.reply({ content: `❌ ${TEAMS[toTeamAbbr]?.name} does not have a registered GM.`, ephemeral: true });
       return;
     }
@@ -269,8 +270,15 @@ export async function execute(
     }
 
     await interaction.deferReply({ ephemeral: true });
+
+    // CPU team routing — AI GM evaluates and responds immediately
+    if (isCPUTeam) {
+      await handleCPUTradeProposal(interaction, manager, proposerTeamAbbr, receiverTeamAbbr, offered, requested, offeredPlayers, requestedPlayers, offeredFuture, requestedFuture);
+      return;
+    }
+
     const result = await manager.trades.proposeTrade(
-      interaction.user.id, toUserId,
+      interaction.user.id, toUserId!,
       offered, requested,
       offeredPlayers, requestedPlayers,
       offeredFuture, requestedFuture
@@ -534,6 +542,82 @@ export async function execute(
     await interaction.editReply(`✅ Trade force-executed between **${TEAMS[offerTeamAbbr]?.name ?? offerTeamAbbr}** and **${TEAMS[receiveTeamAbbr]?.name ?? receiveTeamAbbr}**.`);
     return;
   }
+}
+
+async function handleCPUTradeProposal(
+  interaction: ChatInputCommandInteraction,
+  manager: DraftManager,
+  proposerTeam: string,
+  receiverTeam: string,
+  offered: number[],
+  requested: number[],
+  offeredPlayers: string[],
+  requestedPlayers: string[],
+  offeredFuture: string[],
+  requestedFuture: string[],
+): Promise<void> {
+  const cpuTeamName = TEAMS[receiverTeam]?.name ?? receiverTeam;
+
+  // Build a PendingTrade for the AI GM to evaluate
+  const trade = {
+    id: 'CPU-EVAL',
+    proposerUserId: interaction.user.id,
+    proposerTeam,
+    receiverUserId: 'cpu',
+    receiverTeam,
+    offeredOveralls: offered,
+    requestedOveralls: requested,
+    offeredPlayers,
+    requestedPlayers,
+    offeredFuturePicks: offeredFuture,
+    requestedFuturePicks: requestedFuture,
+    createdAt: Date.now(),
+    expiresAt: Date.now() + 60_000,
+  };
+
+  const evaluation = await manager.aiGM.evaluateHumanProposal(trade);
+
+  if (!evaluation) {
+    await interaction.editReply(`The **${cpuTeamName}** GM is unavailable right now. Try again later.`);
+    return;
+  }
+
+  if (evaluation.decision === 'accept') {
+    const result = await manager.trades.executeCPUTrade(trade);
+    if (result.success) {
+      await interaction.editReply(
+        `The **${cpuTeamName}** GM accepted your trade!\n*"${evaluation.reasoning}"*`
+      );
+    } else {
+      await interaction.editReply(`The **${cpuTeamName}** GM wanted to accept, but: ${result.error}`);
+    }
+    return;
+  }
+
+  if (evaluation.decision === 'counter' && evaluation.counterOffer) {
+    const co = evaluation.counterOffer;
+    const formatPicks = (picks: number[]) => picks.length ? `picks #${picks.join(', #')}` : '';
+    const formatFuture = (ids: string[]) => ids.length ? `future ${ids.map(id => {
+      const m = id.match(/^(\d+)-R(\d+)-/);
+      return m ? `${m[1]} R${m[2]}` : id;
+    }).join(', ')}` : '';
+
+    const coOfferParts = [formatPicks(co.offeredOveralls), formatFuture(co.offeredFuturePicks)].filter(Boolean).join(' + ') || 'nothing';
+    const coRequestParts = [formatPicks(co.requestedOveralls), formatFuture(co.requestedFuturePicks)].filter(Boolean).join(' + ') || 'nothing';
+
+    await interaction.editReply(
+      `The **${cpuTeamName}** GM countered your offer!\n` +
+      `*"${evaluation.reasoning}"*\n\n` +
+      `**Counter-offer:** They send ${coOfferParts}, they want ${coRequestParts}\n` +
+      `Use \`/trade propose\` with the counter terms to accept, or propose something else.`
+    );
+    return;
+  }
+
+  // Declined
+  await interaction.editReply(
+    `The **${cpuTeamName}** GM declined your trade.\n*"${evaluation.reasoning}"*`
+  );
 }
 
 export async function autocomplete(

@@ -61,6 +61,11 @@ export const data = new SlashCommandBuilder()
       .setDescription('Validate trades against salary cap (default: false)')
       .setRequired(false)
     )
+    .addBooleanOption(opt => opt
+      .setName('cpu-trading')
+      .setDescription('Allow CPU teams to propose and accept trades (default: false)')
+      .setRequired(false)
+    )
   )
   .addSubcommand(sub => sub
     .setName('register')
@@ -269,6 +274,7 @@ export async function execute(
     const allowPlayerTrades = interaction.options.getBoolean('allow-player-trades') ?? true;
     const tradeAnnouncement = (interaction.options.getString('trade-announcement') ?? 'intrigue') as TradeAnnouncement;
     const enforceSalaryCap = interaction.options.getBoolean('enforce-salary-cap') ?? false;
+    const cpuTrading = interaction.options.getBoolean('cpu-trading') ?? false;
 
     await manager.setup({
       channelId: channel.id,
@@ -278,6 +284,7 @@ export async function execute(
       allowPlayerTrades,
       tradeAnnouncement,
       enforceSalaryCap,
+      cpuTrading,
     });
 
     const timerStr = timer ? `${timer}m per pick` : 'No timer';

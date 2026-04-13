@@ -88,6 +88,42 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
     return;
   }
+
+  if (interaction.isButton()) {
+    const customId = interaction.customId;
+    try {
+      if (customId.startsWith('cpu-offer-accept:')) {
+        const offerId = customId.slice('cpu-offer-accept:'.length);
+        await interaction.deferReply({ ephemeral: true });
+        const result = await manager.aiGM.handleOfferAccept(offerId, interaction.user.id);
+        if (result.success) {
+          await interaction.editReply('Trade accepted!');
+        } else {
+          await interaction.editReply(`Could not accept: ${result.error}`);
+        }
+      } else if (customId.startsWith('cpu-offer-decline:')) {
+        const offerId = customId.slice('cpu-offer-decline:'.length);
+        await interaction.deferReply({ ephemeral: true });
+        const result = await manager.aiGM.handleOfferDecline(offerId, interaction.user.id);
+        if (result.success) {
+          await interaction.editReply('Trade declined.');
+        } else {
+          await interaction.editReply(`Could not decline: ${result.error}`);
+        }
+      }
+    } catch (err) {
+      console.error('Button handler error:', err);
+      try {
+        const msg = { content: 'An error occurred processing this button.', ephemeral: true };
+        if (interaction.replied || interaction.deferred) {
+          await interaction.followUp(msg);
+        } else {
+          await interaction.reply(msg);
+        }
+      } catch { /* expired */ }
+    }
+    return;
+  }
 });
 
 client.login(token);

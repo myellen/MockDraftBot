@@ -6,6 +6,7 @@ import {
   PickSlot, PickResult, RegisterResult, PendingTrade, FuturePickRight, BoardData,
 } from './types';
 import { TradeManager } from './TradeManager';
+import { AIGMService } from './AIGMService';
 import { buildSchedule } from './scheduleBuilder';
 import { FUTURE_PICK_TRADES } from '../data/draftOrder';
 import { PROSPECTS_DEDUPED, PROSPECT_BY_RANK } from '../data/prospects';
@@ -56,7 +57,7 @@ function buildFuturePickRights(): FuturePickRight[] {
 const DEFAULT_STATE: DraftState = {
   schemaVersion: 1,
   status: 'idle',
-  config: { channelId: null, timerSeconds: null, autoPick: true, rounds: 7, allowPlayerTrades: true, tradeAnnouncement: 'intrigue', enforceSalaryCap: false },
+  config: { channelId: null, timerSeconds: null, autoPick: true, rounds: 7, allowPlayerTrades: true, tradeAnnouncement: 'intrigue', enforceSalaryCap: false, cpuTrading: false },
   assignments: {},
   coManagers: {},
   schedule: [],
@@ -78,6 +79,7 @@ export class DraftManager {
   private client: Client;
   private guildId: string;
   public readonly trades: TradeManager;
+  public readonly aiGM: AIGMService;
 
   private constructor(client: Client, state: DraftState, boardData: BoardData, guildId: string) {
     this.client = client;
@@ -92,6 +94,12 @@ export class DraftManager {
       resolvePlayer: (name, team) => this.resolvePlayer(name, team),
       clearTimer: () => this.clearTimer(),
       refreshClock: () => this.refreshClock(),
+    });
+    this.aiGM = new AIGMService({
+      getState: () => this.state,
+      getBoardData: () => this.boardData,
+      getTradeManager: () => this.trades,
+      sendToChannel: (embed, components) => this.sendEmbedWithComponents(embed, components),
     });
   }
 
@@ -289,6 +297,7 @@ export class DraftManager {
     const pick = await this.recordAndAnnounce(slot, prospectRank, userId, false);
     this.state.currentPickIndex++;
     await this.persist();
+    if (pick) void this.aiGM.onPickMade(pick);
     const completionEmbeds = await this.advance();
 
     return { success: true, pick, completionEmbeds };
@@ -521,13 +530,23 @@ export class DraftManager {
       const userId = this.state.assignments[slot.currentTeam] ?? null;
 
       if (!userId && this.state.config.autoPick) {
-        // CPU pick — pick best available immediately
+        // CPU turn — let AI GM try to trade first
+        const traded = await this.aiGM.onCPUTurn(slot);
+        if (traded) {
+          // Trade changed the clock — re-evaluate from the top
+          await delay(2000);
+          continue;
+        }
+
+        // No trade — pick best available
         const bestRank = await this.getBestPickForTeam(slot.currentTeam);
         if (bestRank === undefined) break;
         await this.recordAndAnnounce(slot, bestRank, null, true);
         this.state.currentPickIndex++;
         await this.persist();
-        // Small delay to avoid Discord rate limits
+        // Notify AI GM of the pick
+        const lastPick = this.state.picks[this.state.picks.length - 1];
+        if (lastPick) void this.aiGM.onPickMade(lastPick);
         await delay(1500);
         continue;
       }
@@ -540,6 +559,10 @@ export class DraftManager {
       if (this.state.config.timerSeconds && userId) {
         this.startTimer();
       }
+
+      // CPU GMs work phones while human decides (fire-and-forget)
+      if (userId) void this.aiGM.onHumanTurn(slot);
+
       break;
     }
   }
@@ -594,7 +617,14 @@ export class DraftManager {
     await this.sendMessage({ embeds });
   }
 
-  private async sendMessage(opts: { embeds?: import('discord.js').EmbedBuilder[]; content?: string }): Promise<void> {
+  private async sendEmbedWithComponents(
+    embed: import('discord.js').EmbedBuilder,
+    components?: import('discord.js').ActionRowBuilder<import('discord.js').ButtonBuilder>[],
+  ): Promise<void> {
+    await this.sendMessage({ embeds: [embed], components: components as any });
+  }
+
+  private async sendMessage(opts: { embeds?: import('discord.js').EmbedBuilder[]; content?: string; components?: any }): Promise<void> {
     if (!this.state.config.channelId) return;
     try {
       const channel = await this.client.channels.fetch(this.state.config.channelId);

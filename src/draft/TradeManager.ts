@@ -49,6 +49,65 @@ export class TradeManager {
     }
   }
 
+  /** Execute a trade: swap ownership, record history, announce, refresh clock. */
+  private async executeTradeSideEffects(trade: PendingTrade): Promise<void> {
+    for (const overall of trade.offeredOveralls) {
+      const slot = this.state.schedule.find(s => s.overall === overall);
+      if (slot) { slot.currentTeam = trade.receiverTeam; slot.isTraded = true; }
+    }
+    for (const overall of trade.requestedOveralls) {
+      const slot = this.state.schedule.find(s => s.overall === overall);
+      if (slot) { slot.currentTeam = trade.proposerTeam; slot.isTraded = true; }
+    }
+
+    for (const name of trade.offeredPlayers) {
+      this.state.playerOwnership[name.toLowerCase()] = trade.receiverTeam;
+    }
+    for (const name of trade.requestedPlayers) {
+      this.state.playerOwnership[name.toLowerCase()] = trade.proposerTeam;
+    }
+
+    for (const id of trade.offeredFuturePicks) {
+      const right = this.state.futurePickRights.find(r => r.id === id);
+      if (right) right.currentTeam = trade.receiverTeam;
+    }
+    for (const id of trade.requestedFuturePicks) {
+      const right = this.state.futurePickRights.find(r => r.id === id);
+      if (right) right.currentTeam = trade.proposerTeam;
+    }
+
+    this.state.tradeHistory.push(trade);
+    await this.host.persist();
+    await this.host.sendEmbed(buildTradeExecutedEmbed(trade, TEAMS, this.state.schedule));
+
+    const currentSlot = this.state.schedule[this.state.currentPickIndex];
+    const involvedPicks = new Set([...trade.offeredOveralls, ...trade.requestedOveralls]);
+    if (currentSlot && involvedPicks.has(currentSlot.overall)) {
+      this.host.clearTimer();
+      await this.host.refreshClock();
+    }
+  }
+
+  /** Cancel any pending human trades that overlap with an executed trade's assets. */
+  private cancelSupersededPendingTrades(executedTrade: PendingTrade): void {
+    const involvedPicks = new Set([...executedTrade.offeredOveralls, ...executedTrade.requestedOveralls]);
+    const involvedPlayers = new Set(
+      [...executedTrade.offeredPlayers, ...executedTrade.requestedPlayers].map(p => p.toLowerCase()),
+    );
+    const superseded = this.state.pendingTrades.filter(t =>
+      t.id !== executedTrade.id && (
+        t.offeredOveralls.some(o => involvedPicks.has(o)) ||
+        t.requestedOveralls.some(o => involvedPicks.has(o)) ||
+        t.offeredPlayers.some(p => involvedPlayers.has(p.toLowerCase())) ||
+        t.requestedPlayers.some(p => involvedPlayers.has(p.toLowerCase()))
+      )
+    );
+    this.cancelTrades(superseded, 'superseded');
+    this.state.pendingTrades = this.state.pendingTrades.filter(t =>
+      t.id !== executedTrade.id && !superseded.some(s => s.id === t.id)
+    );
+  }
+
   // ─── Salary Cap ───────────────────────────────────────────────────────────
 
   /**
@@ -415,65 +474,8 @@ export class TradeManager {
     const capCheck = this.validateTradeCap(trade);
     if (!capCheck.valid) return { success: false, error: capCheck.error };
 
-    // Execute: swap currentTeam on the pick slots
-    for (const overall of trade.offeredOveralls) {
-      const slot = this.state.schedule.find(s => s.overall === overall)!;
-      slot.currentTeam = trade.receiverTeam;
-      if (!slot.isTraded) { slot.isTraded = true; }
-    }
-    for (const overall of trade.requestedOveralls) {
-      const slot = this.state.schedule.find(s => s.overall === overall)!;
-      slot.currentTeam = trade.proposerTeam;
-      if (!slot.isTraded) { slot.isTraded = true; }
-    }
-
-    // Execute: transfer player ownership
-    for (const name of trade.offeredPlayers) {
-      this.state.playerOwnership[name.toLowerCase()] = trade.receiverTeam;
-    }
-    for (const name of trade.requestedPlayers) {
-      this.state.playerOwnership[name.toLowerCase()] = trade.proposerTeam;
-    }
-
-    // Execute: transfer future pick rights
-    for (const id of trade.offeredFuturePicks) {
-      const right = this.state.futurePickRights.find(r => r.id === id);
-      if (right) right.currentTeam = trade.receiverTeam;
-    }
-    for (const id of trade.requestedFuturePicks) {
-      const right = this.state.futurePickRights.find(r => r.id === id);
-      if (right) right.currentTeam = trade.proposerTeam;
-    }
-
-    // Save to history before removing
-    this.state.tradeHistory.push(trade);
-
-    // Remove this trade and cancel any overlapping pending trades (picks or players)
-    const involvedPicks = new Set([...trade.offeredOveralls, ...trade.requestedOveralls]);
-    const involvedPlayers = new Set([...trade.offeredPlayers, ...trade.requestedPlayers].map(p => p.toLowerCase()));
-    const superseded = this.state.pendingTrades.filter(t =>
-      t.id !== tradeId && (
-        t.offeredOveralls.some(o => involvedPicks.has(o)) ||
-        t.requestedOveralls.some(o => involvedPicks.has(o)) ||
-        t.offeredPlayers.some(p => involvedPlayers.has(p.toLowerCase())) ||
-        t.requestedPlayers.some(p => involvedPlayers.has(p.toLowerCase()))
-      )
-    );
-    this.cancelTrades(superseded, 'superseded');
-    this.state.pendingTrades = this.state.pendingTrades.filter(t =>
-      t.id !== tradeId && !superseded.some(s => s.id === t.id)
-    );
-
-    await this.host.persist();
-    await this.host.sendEmbed(buildTradeExecutedEmbed(trade, TEAMS, this.state.schedule));
-
-    // If the current pick was part of this trade, reset the clock for the new owner
-    const currentSlot = this.state.schedule[this.state.currentPickIndex];
-    if (currentSlot && involvedPicks.has(currentSlot.overall)) {
-      this.host.clearTimer();
-      await this.host.refreshClock();
-    }
-
+    this.cancelSupersededPendingTrades(trade);
+    await this.executeTradeSideEffects(trade);
     return { success: true, trade };
   }
 
@@ -563,41 +565,41 @@ export class TradeManager {
     const capCheck = this.validateTradeCap(trade);
     if (!capCheck.valid) return { success: false, error: capCheck.error };
 
-    // Execute immediately
-    for (const overall of offeredOveralls) {
-      const slot = this.state.schedule.find(s => s.overall === overall);
-      if (slot) { slot.currentTeam = receiverTeam; slot.isTraded = true; }
-    }
-    for (const overall of requestedOveralls) {
-      const slot = this.state.schedule.find(s => s.overall === overall);
-      if (slot) { slot.currentTeam = proposerTeam; slot.isTraded = true; }
-    }
-    for (const name of offeredPlayers) {
-      this.state.playerOwnership[name.toLowerCase()] = receiverTeam;
-    }
-    for (const name of requestedPlayers) {
-      this.state.playerOwnership[name.toLowerCase()] = proposerTeam;
-    }
-    for (const id of offeredFuturePickIds) {
-      const right = this.state.futurePickRights.find(r => r.id === id);
-      if (right) right.currentTeam = receiverTeam;
-    }
-    for (const id of requestedFuturePickIds) {
-      const right = this.state.futurePickRights.find(r => r.id === id);
-      if (right) right.currentTeam = proposerTeam;
+    await this.executeTradeSideEffects(trade);
+    return { success: true, trade };
+  }
+
+  /**
+   * Execute a pre-built trade from the AI GM system.
+   * Validates pick availability and salary cap, cancels superseded human trades.
+   */
+  async executeCPUTrade(
+    trade: PendingTrade,
+  ): Promise<{ success: boolean; error?: string; trade?: PendingTrade }> {
+    if (!this.state.config.allowPlayerTrades && (trade.offeredPlayers.length > 0 || trade.requestedPlayers.length > 0)) {
+      return { success: false, error: 'Player trades are disabled.' };
     }
 
-    this.state.tradeHistory.push(trade);
-    await this.host.persist();
-    await this.host.sendEmbed(buildTradeExecutedEmbed(trade, TEAMS, this.state.schedule));
-
-    const currentSlot = this.state.schedule[this.state.currentPickIndex];
-    const involvedPicks = new Set([...offeredOveralls, ...requestedOveralls]);
-    if (currentSlot && involvedPicks.has(currentSlot.overall)) {
-      this.host.clearTimer();
-      await this.host.refreshClock();
+    // Validate picks are still available in future schedule
+    const futurePicks = this.state.schedule.slice(this.state.currentPickIndex);
+    for (const overall of trade.offeredOveralls) {
+      const slot = futurePicks.find(s => s.overall === overall);
+      if (!slot || slot.currentTeam !== trade.proposerTeam) {
+        return { success: false, error: `Pick #${overall} is no longer available.` };
+      }
+    }
+    for (const overall of trade.requestedOveralls) {
+      const slot = futurePicks.find(s => s.overall === overall);
+      if (!slot || slot.currentTeam !== trade.receiverTeam) {
+        return { success: false, error: `Pick #${overall} is no longer available.` };
+      }
     }
 
+    const capCheck = this.validateTradeCap(trade);
+    if (!capCheck.valid) return { success: false, error: capCheck.error };
+
+    this.cancelSupersededPendingTrades(trade);
+    await this.executeTradeSideEffects(trade);
     return { success: true, trade };
   }
 

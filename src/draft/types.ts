@@ -55,6 +55,7 @@ export interface DraftConfig {
   allowPlayerTrades: boolean; // whether players can be included in trades (default true)
   tradeAnnouncement: TradeAnnouncement; // how trade proposals are announced (default 'intrigue')
   enforceSalaryCap: boolean; // whether to validate trades against salary cap (default false)
+  cpuTrading: boolean; // whether CPU teams can propose/accept/counter trades (default false)
 }
 
 export interface FuturePickRight {
