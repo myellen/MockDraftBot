@@ -5,6 +5,7 @@ import {
 import { TradeEngine } from './TradeEngine';
 import { AIGMService } from './AIGMService';
 import { TypedEventEmitter, DraftEventMap } from './events';
+import type { PersistenceProvider, TimerProvider } from './interfaces';
 import { buildSchedule } from './scheduleBuilder';
 import { FUTURE_PICK_TRADES } from '../data/draftOrder';
 import { PROSPECTS_DEDUPED, PROSPECT_BY_RANK } from '../data/prospects';
@@ -17,7 +18,7 @@ export { formatCapAmount } from './TradeEngine';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function buildFuturePickRights(): FuturePickRight[] {
+export function buildFuturePickRights(): FuturePickRight[] {
   const rights: FuturePickRight[] = [];
   for (const year of [2027, 2028]) {
     for (const abbr of Object.keys(TEAMS)) {
@@ -77,14 +78,20 @@ function delay(ms: number): Promise<void> {
  * The engine emits typed events (pick:made, pick:clock, draft:complete,
  * trade:executed, etc.) that adapters subscribe to for presentation.
  */
-export abstract class DraftEngine extends TypedEventEmitter<DraftEventMap> {
-  protected state: DraftState;
-  protected boardData: BoardData;
-  protected timerHandle: unknown = null;
+export class DraftEngine extends TypedEventEmitter<DraftEventMap> {
+  private state: DraftState;
+  private boardData: BoardData;
+  private timerHandle: string | null = null;
   public readonly trades: TradeEngine;
   public readonly aiGM: AIGMService;
 
-  constructor(state: DraftState, boardData: BoardData) {
+  constructor(
+    private instanceId: string,
+    state: DraftState,
+    boardData: BoardData,
+    private persistence: PersistenceProvider,
+    private timer: TimerProvider,
+  ) {
     super();
     this.state = state;
     this.boardData = boardData;
@@ -105,21 +112,24 @@ export abstract class DraftEngine extends TypedEventEmitter<DraftEventMap> {
     });
   }
 
-  // ─── IO hooks (subclass implements) ───────────────────────────────────────
-
-  protected abstract persistState(state: DraftState): Promise<void>;
-  protected abstract persistBoards(boards: BoardData): Promise<void>;
-  protected abstract scheduleTimer(ms: number, cb: () => void): unknown;
-  protected abstract cancelTimer(handle: unknown): void;
-
-  // ─── Persistence wrappers ─────────────────────────────────────────────────
-
-  protected async persist(): Promise<void> {
-    await this.persistState(this.state);
+  static async load(
+    id: string,
+    persistence: PersistenceProvider,
+    timer: TimerProvider,
+  ): Promise<DraftEngine> {
+    const state = (await persistence.loadState(id)) ?? { ...DEFAULT_STATE };
+    const boards = (await persistence.loadBoards(id)) ?? { ...DEFAULT_BOARD_DATA };
+    return new DraftEngine(id, state, boards, persistence, timer);
   }
 
-  protected async persistBoardData(): Promise<void> {
-    await this.persistBoards(this.boardData);
+  // ─── Persistence ──────────────────────────────────────────────────────────
+
+  private async persist(): Promise<void> {
+    await this.persistence.saveState(this.instanceId, this.state);
+  }
+
+  private async persistBoardData(): Promise<void> {
+    await this.persistence.saveBoards(this.instanceId, this.boardData);
   }
 
   // ─── Setup ────────────────────────────────────────────────────────────────
@@ -385,12 +395,12 @@ export abstract class DraftEngine extends TypedEventEmitter<DraftEventMap> {
   private startTimer(): void {
     const seconds = this.state.config.timerSeconds!;
     this.state.timerExpiresAt = Date.now() + seconds * 1000;
-    this.timerHandle = this.scheduleTimer(seconds * 1000, () => this.onTimerExpired());
+    this.timerHandle = this.timer.schedule(seconds * 1000, () => this.onTimerExpired());
   }
 
   clearTimer(): void {
     if (this.timerHandle !== null) {
-      this.cancelTimer(this.timerHandle);
+      this.timer.cancel(this.timerHandle);
       this.timerHandle = null;
     }
     this.state.timerExpiresAt = null;
@@ -409,10 +419,9 @@ export abstract class DraftEngine extends TypedEventEmitter<DraftEventMap> {
     if (this.state.status !== 'active' || this.state.timerExpiresAt === null) return;
     const remaining = this.state.timerExpiresAt - Date.now();
     if (remaining <= 0) {
-      // Fire immediately on next tick
-      this.timerHandle = this.scheduleTimer(0, () => this.onTimerExpired());
+      this.timerHandle = this.timer.schedule(0, () => this.onTimerExpired());
     } else {
-      this.timerHandle = this.scheduleTimer(remaining, () => this.onTimerExpired());
+      this.timerHandle = this.timer.schedule(remaining, () => this.onTimerExpired());
     }
   }
 
