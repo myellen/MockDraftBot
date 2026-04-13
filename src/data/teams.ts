@@ -1,4 +1,4 @@
-import { Team } from '../draft/types';
+import { Team } from '../engine/types';
 
 export const TEAMS: Record<string, Team> = {
   'LV':  { name: 'Las Vegas Raiders',        city: 'Las Vegas',     abbr: 'LV',  color: 0xA5ACAF },

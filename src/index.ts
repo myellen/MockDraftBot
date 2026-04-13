@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { Client, GatewayIntentBits, Events } from 'discord.js';
-import { DraftManager } from './draft/DraftManager';
+import { DraftManager } from './discord/DraftManager';
 import { commandMap } from './commands/index';
 import { isOllamaConfigured } from './llm/OllamaService';
 import { buildIndex as buildEmbeddingIndex } from './llm/EmbeddingService';

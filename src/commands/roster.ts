@@ -1,5 +1,5 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction, AutocompleteInteraction, EmbedBuilder } from 'discord.js';
-import { DraftManager } from '../draft/DraftManager';
+import { DraftManager } from '../discord/DraftManager';
 import { TEAMS } from '../data/teams';
 import { buildTeamRosterEmbed } from '../utils/embeds';
 

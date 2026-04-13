@@ -13,9 +13,9 @@
  * since CPU offers don't survive restarts — they're ephemeral by design.
  */
 
-import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, TextChannel } from 'discord.js';
 import type { DraftState, PendingTrade, PickSlot, FuturePickRight } from './types';
-import type { TradeManager } from './TradeManager';
+import type { DraftEventMap } from './events';
+import type { TradeEngine } from './TradeEngine';
 import { getGMProfile, type GMProfile } from '../data/gmProfiles';
 import { TEAMS } from '../data/teams';
 import { DEFAULT_STRATEGY_PROMPTS } from '../data/teamProfiles';
@@ -49,8 +49,8 @@ export interface CPUOffer {
 interface AIGMHost {
   getState(): Readonly<DraftState>;
   getBoardData(): { strategyPrompts: Record<string, string> };
-  getTradeManager(): TradeManager;
-  sendToChannel(embed: EmbedBuilder, components?: ActionRowBuilder<ButtonBuilder>[]): Promise<void>;
+  getTradeManager(): TradeEngine;
+  emit<K extends keyof DraftEventMap>(event: K, data: DraftEventMap[K]): void;
 }
 
 // ── Rate limiting ───────────────────────────────────────────────────────────
@@ -183,19 +183,7 @@ export class AIGMService {
     this.pendingCPUOffers.set(offerId, offer);
     this.offersThisPick++;
 
-    const embed = this.buildOfferEmbed(offer, state);
-    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`cpu-offer-accept:${offerId}`)
-        .setLabel('Accept Trade')
-        .setStyle(ButtonStyle.Success),
-      new ButtonBuilder()
-        .setCustomId(`cpu-offer-decline:${offerId}`)
-        .setLabel('Decline')
-        .setStyle(ButtonStyle.Danger),
-    );
-
-    await this.host.sendToChannel(embed, [row]);
+    this.host.emit('cpu-offer:sent', { offer });
   }
 
   /** Handle a human clicking Accept on a CPU offer. */
@@ -419,13 +407,8 @@ export class AIGMService {
     const options = phrases[outcome] ?? phrases.declined;
     const headline = options[Math.floor(Math.random() * options.length)];
 
-    const embed = new EmbedBuilder()
-      .setDescription(`${headline}\n> *${reasoning.slice(0, 200)}*`)
-      .setColor(0x95a5a6)
-      .setFooter({ text: 'Trade Market Chatter' });
-
     try {
-      await this.host.sendToChannel(embed);
+      this.host.emit('trade:chatter', { team1, team2, outcome, reasoning: `${headline}\n> *${reasoning.slice(0, 200)}*` });
     } catch { /* non-critical */ }
   }
 
@@ -521,37 +504,6 @@ export class AIGMService {
       createdAt: offer.createdAt,
       expiresAt: offer.createdAt + 120_000,
     };
-  }
-
-  private buildOfferEmbed(offer: CPUOffer, state: Readonly<DraftState>): EmbedBuilder {
-    const proposerName = TEAMS[offer.proposerTeam]?.name ?? offer.proposerTeam;
-    const receiverName = TEAMS[offer.receiverTeam]?.name ?? offer.receiverTeam;
-    const profile = getGMProfile(offer.proposerTeam);
-
-    const offerLines: string[] = [];
-    for (const o of offer.offeredOveralls) {
-      const slot = state.schedule.find(s => s.overall === o);
-      offerLines.push(`Pick #${o} (R${slot?.round ?? '?'}.${slot?.roundPick ?? '?'})`);
-    }
-    for (const id of offer.offeredFuturePicks) offerLines.push(id);
-
-    const requestLines: string[] = [];
-    for (const o of offer.requestedOveralls) {
-      const slot = state.schedule.find(s => s.overall === o);
-      requestLines.push(`Pick #${o} (R${slot?.round ?? '?'}.${slot?.roundPick ?? '?'})`);
-    }
-    for (const id of offer.requestedFuturePicks) requestLines.push(id);
-
-    return new EmbedBuilder()
-      .setTitle(`Trade Offer from ${proposerName}`)
-      .setDescription(`*"${offer.pitch}"*`)
-      .addFields(
-        { name: `${proposerName} sends`, value: offerLines.join('\n') || 'Nothing', inline: true },
-        { name: `${receiverName} sends`, value: requestLines.join('\n') || 'Nothing', inline: true },
-      )
-      .setColor(TEAMS[offer.proposerTeam]?.color ?? 0x888888)
-      .setFooter({ text: `AI GM (${profile.archetype}) • Offer expires in 2 min` })
-      .setTimestamp();
   }
 
   private cleanExpiredOffers(): void {

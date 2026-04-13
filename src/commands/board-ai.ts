@@ -4,7 +4,7 @@ import {
 } from 'discord.js';
 import * as fs from 'fs';
 import * as path from 'path';
-import { DraftManager } from '../draft/DraftManager';
+import { DraftManager } from '../discord/DraftManager';
 import { TEAMS } from '../data/teams';
 import { ALL_POSITIONS } from '../data/prospects';
 import { isOllamaConfigured, chatJSON, chatJSONWithHistory } from '../llm/OllamaService';

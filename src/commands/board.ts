@@ -3,7 +3,7 @@ import {
   ChatInputCommandInteraction,
   AutocompleteInteraction,
 } from 'discord.js';
-import { DraftManager } from '../draft/DraftManager';
+import { DraftManager } from '../discord/DraftManager';
 import { TEAMS } from '../data/teams';
 import { isAdmin } from '../utils/permissions';
 import { buildBoardEmbed, buildMyBoardEmbed } from '../utils/embeds';

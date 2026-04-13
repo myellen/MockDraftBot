@@ -1,5 +1,5 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction } from 'discord.js';
-import { DraftManager } from '../draft/DraftManager';
+import { DraftManager } from '../discord/DraftManager';
 
 export const data = new SlashCommandBuilder()
   .setName('recap')

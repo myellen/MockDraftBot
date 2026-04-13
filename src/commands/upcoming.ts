@@ -1,5 +1,5 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder } from 'discord.js';
-import { DraftManager } from '../draft/DraftManager';
+import { DraftManager } from '../discord/DraftManager';
 import { TEAMS } from '../data/teams';
 import { ordinal } from '../utils/ordinal';
 import { TEAM_EMOJI } from '../utils/teamEmoji';

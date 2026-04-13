@@ -2,12 +2,12 @@ import {
   SlashCommandBuilder, ChatInputCommandInteraction,
   AutocompleteInteraction, ChannelType, EmbedBuilder
 } from 'discord.js';
-import { DraftManager } from '../draft/DraftManager';
+import { DraftManager } from '../discord/DraftManager';
 import { TEAMS } from '../data/teams';
 import { isAdmin } from '../utils/permissions';
 import { buildAssignmentsEmbed } from '../utils/embeds';
 import { ordinal } from '../utils/ordinal';
-import { TradeAnnouncement } from '../draft/types';
+import { TradeAnnouncement } from '../engine/types';
 
 export const data = new SlashCommandBuilder()
   .setName('draft')
@@ -229,14 +229,10 @@ export const data = new SlashCommandBuilder()
 async function followUpAfterPick(
   interaction: ChatInputCommandInteraction,
   manager: DraftManager,
-  result: { completionEmbeds?: import('discord.js').EmbedBuilder[] }
+  result: { draftComplete?: boolean }
 ): Promise<void> {
-  if (result.completionEmbeds?.length) {
-    for (let i = 0; i < result.completionEmbeds.length; i += 10) {
-      await interaction.followUp({ embeds: result.completionEmbeds.slice(i, i + 10) });
-    }
-    return;
-  }
+  // If draft completed, engine's draft:complete event handles embeds via adapter.
+  if (result.draftComplete) return;
   const nextSlot = manager.getCurrentSlot();
   if (!nextSlot) return;
   const nextTeam = TEAMS[nextSlot.currentTeam];
@@ -367,13 +363,9 @@ export async function execute(
     await interaction.deferReply({ ephemeral: true });
     const state = manager.getState();
     if (state.status === 'complete' || state.status === 'active' || state.status === 'paused') {
-      const embeds = await manager.endDraft();
+      await manager.endDraft();
+      // Completion embeds sent to channel via engine's draft:complete event
       await interaction.editReply('✅ Draft ended.');
-      // Send embeds in batches of 10 (Discord limit) via followUp
-      for (let i = 0; i < embeds.length; i += 10) {
-        const batch = embeds.slice(i, i + 10);
-        await interaction.followUp({ embeds: batch });
-      }
     } else {
       await interaction.editReply('❌ No draft to end.');
     }
