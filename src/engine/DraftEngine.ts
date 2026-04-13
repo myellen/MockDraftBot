@@ -1,43 +1,28 @@
-import { Client, TextChannel } from 'discord.js';
-import * as fs from 'fs/promises';
-import * as path from 'path';
 import {
-  DraftState, DraftStatus, DraftConfig, CompletedPick, CancelledTrade,
-  PickSlot, PickResult, RegisterResult, PendingTrade, FuturePickRight, BoardData,
+  DraftState, DraftConfig, CompletedPick, PickSlot, PickResult,
+  RegisterResult, FuturePickRight, BoardData,
 } from './types';
-import { TradeManager } from './TradeManager';
+import { TradeEngine } from './TradeEngine';
 import { AIGMService } from './AIGMService';
+import { TypedEventEmitter, DraftEventMap } from './events';
+import type { PersistenceProvider, TimerProvider } from './interfaces';
 import { buildSchedule } from './scheduleBuilder';
 import { FUTURE_PICK_TRADES } from '../data/draftOrder';
 import { PROSPECTS_DEDUPED, PROSPECT_BY_RANK } from '../data/prospects';
 import { TEAMS } from '../data/teams';
 import { ROSTERS } from '../data/rosters';
-import { buildPickEmbed, buildOnTheClockEmbed, buildDraftCompleteEmbed, buildTeamRosterEmbed } from '../utils/embeds';
 import { isOllamaConfigured } from '../llm/OllamaService';
 import { smartAutopick } from '../llm/SmartAutopick';
 
-export { formatCapAmount } from './TradeManager';
+export { formatCapAmount } from './TradeEngine';
 
-function statePath(guildId: string): string {
-  return path.join(__dirname, `../../data/draft-state-${guildId}.json`);
-}
+// ─── Helpers ────────────────────────────────────────────────────────────────
 
-function boardPath(guildId: string): string {
-  return path.join(__dirname, `../../data/draft-boards-${guildId}.json`);
-}
-
-const DEFAULT_BOARD_DATA: BoardData = {
-  customBoards: {},
-  strategyNotes: {},
-  strategyPrompts: {},
-};
-
-function buildFuturePickRights(): FuturePickRight[] {
+export function buildFuturePickRights(): FuturePickRight[] {
   const rights: FuturePickRight[] = [];
   for (const year of [2027, 2028]) {
     for (const abbr of Object.keys(TEAMS)) {
       for (let round = 1; round <= 7; round++) {
-        // Check if this pick was already traded before the draft started
         const trade = FUTURE_PICK_TRADES.find(
           t => t.year === year && t.round === round && t.originalTeam === abbr
         );
@@ -54,7 +39,13 @@ function buildFuturePickRights(): FuturePickRight[] {
   return rights;
 }
 
-const DEFAULT_STATE: DraftState = {
+export const DEFAULT_BOARD_DATA: BoardData = {
+  customBoards: {},
+  strategyNotes: {},
+  strategyPrompts: {},
+};
+
+export const DEFAULT_STATE: DraftState = {
   schemaVersion: 1,
   status: 'idle',
   config: { channelId: null, timerSeconds: null, autoPick: true, rounds: 7, allowPlayerTrades: true, tradeAnnouncement: 'intrigue', enforceSalaryCap: false, cpuTrading: false },
@@ -72,110 +63,73 @@ const DEFAULT_STATE: DraftState = {
   futurePickRights: buildFuturePickRights(),
 };
 
-export class DraftManager {
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// ─── DraftEngine ────────────────────────────────────────────────────────────
+
+/**
+ * Pure draft simulation engine. Zero discord.js imports.
+ *
+ * Subclass must implement four IO hooks:
+ *   persistState, persistBoards, scheduleTimer, cancelTimer
+ *
+ * The engine emits typed events (pick:made, pick:clock, draft:complete,
+ * trade:executed, etc.) that adapters subscribe to for presentation.
+ */
+export class DraftEngine extends TypedEventEmitter<DraftEventMap> {
   private state: DraftState;
   private boardData: BoardData;
-  private timerHandle: NodeJS.Timeout | null = null;
-  private client: Client;
-  private guildId: string;
-  public readonly trades: TradeManager;
+  private timerHandle: string | null = null;
+  public readonly trades: TradeEngine;
   public readonly aiGM: AIGMService;
 
-  private constructor(client: Client, state: DraftState, boardData: BoardData, guildId: string) {
-    this.client = client;
+  constructor(
+    private instanceId: string,
+    state: DraftState,
+    boardData: BoardData,
+    private persistence: PersistenceProvider,
+    private timer: TimerProvider,
+  ) {
+    super();
     this.state = state;
     this.boardData = boardData;
-    this.guildId = guildId;
-    this.trades = new TradeManager(this.state, {
+    this.trades = new TradeEngine(this.state, {
       persist: () => this.persist(),
-      sendEmbed: (embed, content) => this.sendEmbed(embed, content),
       getUserTeam: (id) => this.getUserTeam(id),
       isAuthorizedForTeam: (uid, team) => this.isAuthorizedForTeam(uid, team),
       resolvePlayer: (name, team) => this.resolvePlayer(name, team),
       clearTimer: () => this.clearTimer(),
       refreshClock: () => this.refreshClock(),
+      emit: (k, p) => this.emit(k, p),
     });
     this.aiGM = new AIGMService({
       getState: () => this.state,
       getBoardData: () => this.boardData,
       getTradeManager: () => this.trades,
-      sendToChannel: (embed, components) => this.sendEmbedWithComponents(embed, components),
+      emit: (k, p) => this.emit(k, p),
     });
   }
 
-  static async load(client: Client, guildId: string): Promise<DraftManager> {
-    let state: DraftState;
-    try {
-      const raw = await fs.readFile(statePath(guildId), 'utf-8');
-      const parsed = JSON.parse(raw) as DraftState;
-      // Basic schema check
-      if (parsed.schemaVersion !== 1) {
-        console.warn('Draft state schema mismatch — resetting to default');
-        state = { ...DEFAULT_STATE };
-      } else {
-        // Backfill fields added after initial schema
-        const raw = parsed as unknown as Record<string, unknown>;
-        state = {
-          ...parsed,
-          coManagers: (raw.coManagers as Record<string, string[]> | undefined) ?? {},
-          pendingTrades: (raw.pendingTrades as PendingTrade[] | undefined) ?? [],
-          tradeHistory: (raw.tradeHistory as PendingTrade[] | undefined) ?? [],
-          cancelledTrades: (raw.cancelledTrades as CancelledTrade[] | undefined) ?? [],
-          playerOwnership: (raw.playerOwnership as Record<string, string> | undefined) ?? {},
-          futurePickRights: (raw.futurePickRights as FuturePickRight[] | undefined) ?? buildFuturePickRights(),
-          config: { ...(parsed.config as DraftConfig), rounds: (parsed.config as DraftConfig).rounds ?? 7, allowPlayerTrades: (parsed.config as DraftConfig).allowPlayerTrades ?? true, tradeAnnouncement: (parsed.config as DraftConfig).tradeAnnouncement ?? 'intrigue' },
-        };
-        // Backfill arrays on existing trades
-        state.pendingTrades = state.pendingTrades.map(t => {
-          const rt = t as unknown as Record<string, unknown>;
-          return {
-            ...t,
-            offeredPlayers: (rt.offeredPlayers as string[] | undefined) ?? [],
-            requestedPlayers: (rt.requestedPlayers as string[] | undefined) ?? [],
-            offeredFuturePicks: (rt.offeredFuturePicks as string[] | undefined) ?? [],
-            requestedFuturePicks: (rt.requestedFuturePicks as string[] | undefined) ?? [],
-          };
-        });
-      }
-    } catch {
-      state = { ...DEFAULT_STATE };
-    }
-
-    let boardData: BoardData;
-    try {
-      const raw = await fs.readFile(boardPath(guildId), 'utf-8');
-      const parsed = JSON.parse(raw) as BoardData;
-      boardData = {
-        customBoards: parsed.customBoards ?? {},
-        strategyNotes: parsed.strategyNotes ?? {},
-        strategyPrompts: (parsed as any).strategyPrompts ?? {},
-      };
-    } catch {
-      boardData = { ...DEFAULT_BOARD_DATA };
-    }
-
-    const manager = new DraftManager(client, state, boardData, guildId);
-
-    // Restore timer if draft was active on restart
-    client.once('ready', () => manager.restoreTimer());
-
-    return manager;
+  static async load(
+    id: string,
+    persistence: PersistenceProvider,
+    timer: TimerProvider,
+  ): Promise<DraftEngine> {
+    const state = (await persistence.loadState(id)) ?? { ...DEFAULT_STATE };
+    const boards = (await persistence.loadBoards(id)) ?? { ...DEFAULT_BOARD_DATA };
+    return new DraftEngine(id, state, boards, persistence, timer);
   }
+
+  // ─── Persistence ──────────────────────────────────────────────────────────
 
   private async persist(): Promise<void> {
-    const p = statePath(this.guildId);
-    const tmp = p + '.tmp';
-    await fs.mkdir(path.dirname(p), { recursive: true });
-    await fs.writeFile(tmp, JSON.stringify(this.state, null, 2), 'utf-8');
-    await fs.rename(tmp, p);
+    await this.persistence.saveState(this.instanceId, this.state);
   }
 
-  private async persistBoards(): Promise<void> {
-    const p = boardPath(this.guildId);
-    const tmp = p + '.tmp';
-    await fs.mkdir(path.dirname(p), { recursive: true });
-    await fs.writeFile(tmp, JSON.stringify(this.boardData, null, 2), 'utf-8');
-    await fs.rename(tmp, p);
+  private async persistBoardData(): Promise<void> {
+    await this.persistence.saveBoards(this.instanceId, this.boardData);
   }
 
   // ─── Setup ────────────────────────────────────────────────────────────────
@@ -192,12 +146,10 @@ export class DraftManager {
     if (this.state.status === 'active' || this.state.status === 'complete') {
       return { success: false, error: 'Cannot register after the draft has started.' };
     }
-    // Check if user already has a team
     const existing = Object.entries(this.state.assignments).find(([, uid]) => uid === userId);
     if (existing) {
       return { success: false, error: `You already control the **${TEAMS[existing[0]].name}**. Use \`/draft unregister\` first.` };
     }
-    // Check if team already taken
     if (this.state.assignments[teamAbbr]) {
       return { success: false, error: `The **${TEAMS[teamAbbr].name}** are already claimed.` };
     }
@@ -227,7 +179,7 @@ export class DraftManager {
     this.state.timerExpiresAt = null;
     await this.persist();
 
-    // Kick off first pick
+    this.emit('draft:started', {} as Record<string, never>);
     await this.advance();
     return { success: true };
   }
@@ -237,17 +189,18 @@ export class DraftManager {
     this.state.status = 'paused';
     this.clearTimer();
     await this.persist();
+    this.emit('draft:paused', {} as Record<string, never>);
   }
 
   async resume(): Promise<void> {
     if (this.state.status !== 'paused') return;
     this.state.status = 'active';
     await this.persist();
+    this.emit('draft:resumed', {} as Record<string, never>);
     await this.advance();
   }
 
   async reset(): Promise<void> {
-    // Soft reset — clears live draft data, preserves assignments/boards/config
     this.clearTimer();
     this.state = {
       ...this.state,
@@ -262,15 +215,16 @@ export class DraftManager {
       cancelledTrades: [],
     };
     await this.persist();
+    this.emit('draft:reset', {} as Record<string, never>);
   }
 
   async wipe(): Promise<void> {
-    // Hard reset — clears everything back to blank slate including boards
     this.clearTimer();
     this.state = { ...DEFAULT_STATE };
     this.boardData = { ...DEFAULT_BOARD_DATA };
     await this.persist();
-    await this.persistBoards();
+    await this.persistBoardData();
+    this.emit('draft:reset', {} as Record<string, never>);
   }
 
   // ─── Picking ──────────────────────────────────────────────────────────────
@@ -282,25 +236,23 @@ export class DraftManager {
     const slot = this.state.schedule[this.state.currentPickIndex];
     if (!slot) return { success: false, error: 'No pick available.' };
 
-    // Verify user is authorized for current team
     if (!this.isAuthorizedForTeam(userId, slot.currentTeam)) {
       const onClock = TEAMS[slot.currentTeam]?.name ?? slot.currentTeam;
       return { success: false, error: `It's not your pick. The **${onClock}** are on the clock.` };
     }
 
-    // Verify prospect available
     if (!this.state.availableRanks.includes(prospectRank)) {
       return { success: false, error: 'That player has already been drafted.' };
     }
 
     this.clearTimer();
-    const pick = await this.recordAndAnnounce(slot, prospectRank, userId, false);
+    const pick = this.recordPick(slot, prospectRank, userId, false);
     this.state.currentPickIndex++;
     await this.persist();
-    if (pick) void this.aiGM.onPickMade(pick);
-    const completionEmbeds = await this.advance();
+    void this.aiGM.onPickMade(pick);
+    const draftComplete = await this.advance();
 
-    return { success: true, pick, completionEmbeds };
+    return { success: true, pick, draftComplete };
   }
 
   async adminMakePick(prospectRank: number): Promise<PickResult> {
@@ -315,21 +267,179 @@ export class DraftManager {
     }
 
     this.clearTimer();
-    const pick = await this.recordAndAnnounce(slot, prospectRank, 'admin', false);
+    const pick = this.recordPick(slot, prospectRank, 'admin', false);
     this.state.currentPickIndex++;
     await this.persist();
-    const completionEmbeds = await this.advance();
+    const draftComplete = await this.advance();
 
-    return { success: true, pick, completionEmbeds };
+    return { success: true, pick, draftComplete };
   }
 
-  // ─── Custom Board / Strategy ─────────────────────────────────────────────
+  async autoPick(userId: string | null): Promise<PickResult> {
+    if (this.state.status !== 'active') {
+      return { success: false, error: 'The draft is not currently active.' };
+    }
+    const slot = this.state.schedule[this.state.currentPickIndex];
+    if (!slot) return { success: false, error: 'No pick available.' };
 
-  /** Fallback chain: smart pick (LLM) → custom board → BPA (default rank order) */
+    if (userId !== null && !this.isAuthorizedForTeam(userId, slot.currentTeam)) {
+      const onClock = TEAMS[slot.currentTeam]?.name ?? slot.currentTeam;
+      return { success: false, error: `It's not your pick. The **${onClock}** are on the clock.` };
+    }
+
+    const bestRank = await this.getBestPickForTeam(slot.currentTeam);
+    if (bestRank === undefined) return { success: false, error: 'No prospects available.' };
+
+    this.clearTimer();
+    const pick = this.recordPick(slot, bestRank, userId, true);
+    this.state.currentPickIndex++;
+    await this.persist();
+    const draftComplete = await this.advance();
+
+    return { success: true, pick, draftComplete };
+  }
+
+  /**
+   * Record a pick into state and emit the pick:made event.
+   * Replaces the old recordAndAnnounce — no embed building.
+   */
+  private recordPick(
+    slot: PickSlot,
+    prospectRank: number,
+    userId: string | null,
+    autoPicked: boolean
+  ): CompletedPick {
+    const prospect = PROSPECT_BY_RANK.get(prospectRank)!;
+
+    this.state.availableRanks = this.state.availableRanks.filter(r => r !== prospectRank);
+
+    const pick: CompletedPick = {
+      overall: slot.overall,
+      round: slot.round,
+      roundPick: slot.roundPick,
+      team: slot.currentTeam,
+      prospectRank,
+      prospectName: prospect.name,
+      pos: prospect.pos,
+      school: prospect.school,
+      userId,
+      autoPicked,
+      pickedAt: Date.now(),
+    };
+
+    this.state.picks.push(pick);
+    this.trades.invalidateTradesForPick(slot.overall);
+    this.emit('pick:made', { pick, slot });
+
+    return pick;
+  }
+
+  // ─── Advance ──────────────────────────────────────────────────────────────
+
+  /**
+   * Advance the draft to the next actionable state.
+   * Returns true if the draft completed during this advance.
+   */
+  private async advance(): Promise<boolean> {
+    const maxRounds = this.state.config.rounds ?? 7;
+    while (true) {
+      const slot = this.state.schedule[this.state.currentPickIndex];
+      if (this.state.currentPickIndex >= this.state.schedule.length || slot.round > maxRounds) {
+        // Draft complete
+        this.state.status = 'complete';
+        this.state.timerExpiresAt = null;
+        await this.persist();
+        this.emit('draft:complete', { picks: this.state.picks });
+        return true;
+      }
+      const userId = this.state.assignments[slot.currentTeam] ?? null;
+
+      if (!userId && this.state.config.autoPick) {
+        // CPU turn — let AI GM try to trade first
+        const traded = await this.aiGM.onCPUTurn(slot);
+        if (traded) {
+          // Trade changed the clock — re-evaluate from the top
+          await delay(2000);
+          continue;
+        }
+
+        // No trade — pick best available
+        const bestRank = await this.getBestPickForTeam(slot.currentTeam);
+        if (bestRank === undefined) break;
+        const pick = this.recordPick(slot, bestRank, null, true);
+        this.state.currentPickIndex++;
+        await this.persist();
+        // Notify AI GM of the pick
+        void this.aiGM.onPickMade(pick);
+        await delay(1500);
+        continue;
+      }
+
+      // Human's turn (or CPU without autoPick) — emit on-the-clock event
+      this.emit('pick:clock', { slot, teamAbbr: slot.currentTeam });
+
+      if (this.state.config.timerSeconds && userId) {
+        this.startTimer();
+      }
+
+      // CPU GMs work phones while human decides (fire-and-forget)
+      if (userId) void this.aiGM.onHumanTurn(slot);
+
+      break;
+    }
+    return false;
+  }
+
+  // ─── Timer ────────────────────────────────────────────────────────────────
+
+  private startTimer(): void {
+    const seconds = this.state.config.timerSeconds!;
+    this.state.timerExpiresAt = Date.now() + seconds * 1000;
+    this.timerHandle = this.timer.schedule(seconds * 1000, () => this.onTimerExpired());
+  }
+
+  clearTimer(): void {
+    if (this.timerHandle !== null) {
+      this.timer.cancel(this.timerHandle);
+      this.timerHandle = null;
+    }
+    this.state.timerExpiresAt = null;
+  }
+
+  private async onTimerExpired(): Promise<void> {
+    if (this.state.timerExpiresAt === null) return;
+    if (this.state.status !== 'active') return;
+    console.log(`⏰ Timer expired for pick ${this.state.currentPickIndex + 1}`);
+    this.state.timerExpiresAt = null;
+    await this.autoPick(null);
+    // draft:complete event fires inside autoPick→advance if the draft ended
+  }
+
+  restoreTimer(): void {
+    if (this.state.status !== 'active' || this.state.timerExpiresAt === null) return;
+    const remaining = this.state.timerExpiresAt - Date.now();
+    if (remaining <= 0) {
+      this.timerHandle = this.timer.schedule(0, () => this.onTimerExpired());
+    } else {
+      this.timerHandle = this.timer.schedule(remaining, () => this.onTimerExpired());
+    }
+  }
+
+  // ─── End draft (manual) ───────────────────────────────────────────────────
+
+  async endDraft(): Promise<void> {
+    this.state.status = 'complete';
+    this.state.timerExpiresAt = null;
+    this.clearTimer();
+    await this.persist();
+    this.emit('draft:complete', { picks: this.state.picks });
+  }
+
+  // ─── Custom Board / Strategy ──────────────────────────────────────────────
+
   private async getBestPickForTeam(teamAbbr: string): Promise<number | undefined> {
     const available = new Set(this.state.availableRanks);
 
-    // 1. Smart pick via LLM (when Ollama is available)
     if (isOllamaConfigured()) {
       const slot = this.state.schedule[this.state.currentPickIndex];
       const draftedByTeam = this.state.picks
@@ -349,14 +459,12 @@ export class DraftManager {
       if (smartRank !== undefined && available.has(smartRank)) return smartRank;
     }
 
-    // 2. Custom board fallback (when Ollama unavailable or LLM failed)
     const board = this.boardData.customBoards[teamAbbr];
     if (board?.length) {
       const pick = board.find(rank => available.has(rank));
       if (pick !== undefined) return pick;
     }
 
-    // 3. BPA (default rank order)
     return this.state.availableRanks[0];
   }
 
@@ -367,14 +475,13 @@ export class DraftManager {
     const ranks: number[] = [];
     const unmatched: string[] = [];
     for (const rawName of rankedNames) {
-      // Strip parenthetical suffixes like "(QB, Alabama)" that LLMs sometimes append
       const name = rawName.replace(/\s*\(.*\)\s*$/, '').trim();
       const rank = nameToRank.get(name.toLowerCase());
       if (rank !== undefined) ranks.push(rank);
       else unmatched.push(rawName);
     }
     this.boardData.customBoards[teamAbbr] = ranks;
-    void this.persistBoards();
+    void this.persistBoardData();
     return { matched: ranks.length, unmatched };
   }
 
@@ -382,7 +489,7 @@ export class DraftManager {
     if (what === 'board' || what === 'all') delete this.boardData.customBoards[teamAbbr];
     if (what === 'strategy' || what === 'all') delete this.boardData.strategyPrompts[teamAbbr];
     if (what === 'all') delete this.boardData.strategyNotes[teamAbbr];
-    void this.persistBoards();
+    void this.persistBoardData();
   }
 
   getCustomBoard(teamAbbr: string): number[] {
@@ -395,12 +502,12 @@ export class DraftManager {
 
   setStrategyPrompt(teamAbbr: string, prompt: string): void {
     this.boardData.strategyPrompts[teamAbbr] = prompt;
-    void this.persistBoards();
+    void this.persistBoardData();
   }
 
   clearStrategyPrompt(teamAbbr: string): void {
     delete this.boardData.strategyPrompts[teamAbbr];
-    void this.persistBoards();
+    void this.persistBoardData();
   }
 
   getStrategyNotes(teamAbbr: string): string[] {
@@ -412,7 +519,7 @@ export class DraftManager {
     notes.push(note);
     if (notes.length > maxNotes) notes.splice(0, notes.length - maxNotes);
     this.boardData.strategyNotes[teamAbbr] = notes;
-    void this.persistBoards();
+    void this.persistBoardData();
   }
 
   getMyBoardPage(teamAbbr: string, page: number, pageSize = 20): {
@@ -422,7 +529,6 @@ export class DraftManager {
     page: number;
   } {
     const board = this.boardData.customBoards[teamAbbr] ?? [];
-    // Before draft starts, availableRanks is empty — treat all prospects as available
     const available = this.state.availableRanks.length > 0
       ? new Set(this.state.availableRanks)
       : new Set(PROSPECTS_DEDUPED.map(p => p.rank));
@@ -442,226 +548,6 @@ export class DraftManager {
       };
     });
     return { entries, total, totalPages, page: safePage };
-  }
-
-  // ─── Auto-pick ────────────────────────────────────────────────────────────
-
-  async autoPick(userId: string | null): Promise<PickResult> {
-    if (this.state.status !== 'active') {
-      return { success: false, error: 'The draft is not currently active.' };
-    }
-    const slot = this.state.schedule[this.state.currentPickIndex];
-    if (!slot) return { success: false, error: 'No pick available.' };
-
-    // If userId provided, verify authorization
-    if (userId !== null && !this.isAuthorizedForTeam(userId, slot.currentTeam)) {
-      const onClock = TEAMS[slot.currentTeam]?.name ?? slot.currentTeam;
-      return { success: false, error: `It's not your pick. The **${onClock}** are on the clock.` };
-    }
-
-    const bestRank = await this.getBestPickForTeam(slot.currentTeam);
-    if (bestRank === undefined) return { success: false, error: 'No prospects available.' };
-
-    this.clearTimer();
-    const pick = await this.recordAndAnnounce(slot, bestRank, userId, true);
-    this.state.currentPickIndex++;
-    await this.persist();
-    const completionEmbeds = await this.advance();
-
-    return { success: true, pick, completionEmbeds };
-  }
-
-  private async recordAndAnnounce(
-    slot: PickSlot,
-    prospectRank: number,
-    userId: string | null,
-    autoPicked: boolean
-  ): Promise<CompletedPick> {
-    const prospect = PROSPECT_BY_RANK.get(prospectRank)!;
-
-    // Remove from available
-    this.state.availableRanks = this.state.availableRanks.filter(r => r !== prospectRank);
-
-    const pick: CompletedPick = {
-      overall: slot.overall,
-      round: slot.round,
-      roundPick: slot.roundPick,
-      team: slot.currentTeam,
-      prospectRank,
-      prospectName: prospect.name,
-      pos: prospect.pos,
-      school: prospect.school,
-      userId,
-      autoPicked,
-      pickedAt: Date.now(),
-    };
-
-    this.state.picks.push(pick);
-
-    // Invalidate any pending trades that included this pick
-    this.trades.invalidateTradesForPick(slot.overall);
-
-    // Announce in channel
-    const embed = buildPickEmbed(pick, slot, TEAMS[slot.currentTeam]);
-    await this.sendEmbed(embed);
-
-    return pick;
-  }
-
-  // ─── Advance ──────────────────────────────────────────────────────────────
-
-  private async advance(): Promise<import('discord.js').EmbedBuilder[] | undefined> {
-    const maxRounds = this.state.config.rounds ?? 7;
-    while (true) {
-      const slot = this.state.schedule[this.state.currentPickIndex];
-      if (this.state.currentPickIndex >= this.state.schedule.length || slot.round > maxRounds) {
-        // Draft complete (all picks done, or configured round limit reached)
-        this.state.status = 'complete';
-        this.state.timerExpiresAt = null;
-        await this.persist();
-        // Return embeds for the caller to send as follow-ups
-        const embeds: import('discord.js').EmbedBuilder[] = [];
-        embeds.push(buildDraftCompleteEmbed(this.state.picks, this.state.picks.length));
-        for (const abbr of Object.keys(TEAMS)) {
-          embeds.push(buildTeamRosterEmbed(TEAMS[abbr], abbr, this.state.picks.filter(p => p.team === abbr), this.state.tradeHistory, this.state.schedule));
-        }
-        return embeds;
-      }
-      const userId = this.state.assignments[slot.currentTeam] ?? null;
-
-      if (!userId && this.state.config.autoPick) {
-        // CPU turn — let AI GM try to trade first
-        const traded = await this.aiGM.onCPUTurn(slot);
-        if (traded) {
-          // Trade changed the clock — re-evaluate from the top
-          await delay(2000);
-          continue;
-        }
-
-        // No trade — pick best available
-        const bestRank = await this.getBestPickForTeam(slot.currentTeam);
-        if (bestRank === undefined) break;
-        await this.recordAndAnnounce(slot, bestRank, null, true);
-        this.state.currentPickIndex++;
-        await this.persist();
-        // Notify AI GM of the pick
-        const lastPick = this.state.picks[this.state.picks.length - 1];
-        if (lastPick) void this.aiGM.onPickMade(lastPick);
-        await delay(1500);
-        continue;
-      }
-
-      // Human's turn (or CPU without autoPick)
-      const team = TEAMS[slot.currentTeam];
-      const embed = buildOnTheClockEmbed(slot, team, userId ? this.getTeamGMLabel(slot.currentTeam) : null, this.state.config.timerSeconds);
-      await this.sendEmbed(embed, this.getTeamPings(slot.currentTeam));
-
-      if (this.state.config.timerSeconds && userId) {
-        this.startTimer();
-      }
-
-      // CPU GMs work phones while human decides (fire-and-forget)
-      if (userId) void this.aiGM.onHumanTurn(slot);
-
-      break;
-    }
-  }
-
-  // ─── Timer ────────────────────────────────────────────────────────────────
-
-  private startTimer(): void {
-    const seconds = this.state.config.timerSeconds!;
-    this.state.timerExpiresAt = Date.now() + seconds * 1000;
-    this.timerHandle = setTimeout(() => this.onTimerExpired(), seconds * 1000);
-  }
-
-  private clearTimer(): void {
-    if (this.timerHandle) {
-      clearTimeout(this.timerHandle);
-      this.timerHandle = null;
-    }
-    this.state.timerExpiresAt = null;
-  }
-
-  private async onTimerExpired(): Promise<void> {
-    if (this.state.timerExpiresAt === null) return; // already handled
-    if (this.state.status !== 'active') return;
-    console.log(`⏰ Timer expired for pick ${this.state.currentPickIndex + 1}`);
-    this.state.timerExpiresAt = null;
-    const result = await this.autoPick(null);
-    // If this autopick ended the draft, send completion via channel (no interaction available)
-    if (result.completionEmbeds?.length) {
-      for (let i = 0; i < result.completionEmbeds.length; i += 10) {
-        await this.sendEmbeds(result.completionEmbeds.slice(i, i + 10));
-      }
-    }
-  }
-
-  private restoreTimer(): void {
-    if (this.state.status !== 'active' || this.state.timerExpiresAt === null) return;
-    const remaining = this.state.timerExpiresAt - Date.now();
-    if (remaining <= 0) {
-      setImmediate(() => this.onTimerExpired());
-    } else {
-      this.timerHandle = setTimeout(() => this.onTimerExpired(), remaining);
-    }
-  }
-
-  // ─── Channel sending ──────────────────────────────────────────────────────
-
-  private async sendEmbed(embed: import('discord.js').EmbedBuilder, content?: string): Promise<void> {
-    await this.sendMessage({ embeds: [embed], content });
-  }
-
-  private async sendEmbeds(embeds: import('discord.js').EmbedBuilder[]): Promise<void> {
-    await this.sendMessage({ embeds });
-  }
-
-  private async sendEmbedWithComponents(
-    embed: import('discord.js').EmbedBuilder,
-    components?: import('discord.js').ActionRowBuilder<import('discord.js').ButtonBuilder>[],
-  ): Promise<void> {
-    await this.sendMessage({ embeds: [embed], components: components as any });
-  }
-
-  private async sendMessage(opts: { embeds?: import('discord.js').EmbedBuilder[]; content?: string; components?: any }): Promise<void> {
-    if (!this.state.config.channelId) return;
-    try {
-      const channel = await this.client.channels.fetch(this.state.config.channelId);
-      if (channel && channel.isTextBased() && 'send' in channel) {
-        await (channel as TextChannel).send(opts);
-      }
-    } catch (err) {
-      console.error('Failed to send message:', err);
-    }
-  }
-
-  private async sendTeamSummaries(): Promise<void> {
-    const teamAbbrs = Object.keys(TEAMS);
-    // Send up to 10 embeds per message (Discord limit)
-    for (let i = 0; i < teamAbbrs.length; i += 10) {
-      const batch = teamAbbrs.slice(i, i + 10);
-      const embeds = batch.map(abbr =>
-        buildTeamRosterEmbed(TEAMS[abbr], abbr, this.state.picks.filter(p => p.team === abbr), this.state.tradeHistory, this.state.schedule)
-      );
-      await this.sendEmbeds(embeds);
-      if (i + 10 < teamAbbrs.length) await delay(800);
-    }
-  }
-
-  /** Manually end the draft. Returns completion + team summary embeds for the caller to send. */
-  async endDraft(): Promise<import('discord.js').EmbedBuilder[]> {
-    this.state.status = 'complete';
-    this.state.timerExpiresAt = null;
-    this.clearTimer();
-    await this.persist();
-
-    const embeds: import('discord.js').EmbedBuilder[] = [];
-    embeds.push(buildDraftCompleteEmbed(this.state.picks, this.state.picks.length));
-    for (const abbr of Object.keys(TEAMS)) {
-      embeds.push(buildTeamRosterEmbed(TEAMS[abbr], abbr, this.state.picks.filter(p => p.team === abbr), this.state.tradeHistory, this.state.schedule));
-    }
-    return embeds;
   }
 
   // ─── Queries ──────────────────────────────────────────────────────────────
@@ -730,21 +616,17 @@ export class DraftManager {
     return Math.max(0, Math.round((this.state.timerExpiresAt - Date.now()) / 1000));
   }
 
-  /** Returns the canonical player name if that player currently belongs to the given team. */
   resolvePlayer(nameQuery: string, teamAbbr: string): string | null {
     const q = nameQuery.toLowerCase();
-    // Check if ownership was overridden by a trade
     const overrideTeam = this.state.playerOwnership[q];
     if (overrideTeam !== undefined) {
       return overrideTeam === teamAbbr ? nameQuery : null;
     }
-    // Fall back to original roster — fuzzy match on name
     const roster = ROSTERS[teamAbbr] ?? [];
     const match = roster.find(p => p.name.toLowerCase().includes(q));
     return match ? match.name : null;
   }
 
-  /** Returns the team that currently owns a player (by fuzzy name match). */
   getPlayerCurrentTeam(nameQuery: string): { name: string; team: string } | null {
     const q = nameQuery.toLowerCase();
     const override = this.state.playerOwnership[q];
@@ -758,15 +640,12 @@ export class DraftManager {
     return null;
   }
 
-  /** Search roster players on a team for autocomplete. */
   searchRosterPlayers(teamAbbr: string, query: string): Array<{ name: string; pos: string }> {
     const q = query.toLowerCase();
     const baseRoster = ROSTERS[teamAbbr] ?? [];
-    // Players traded to this team
     const tradedIn = Object.entries(this.state.playerOwnership)
       .filter(([, t]) => t === teamAbbr)
       .map(([nameLower]) => {
-        // Find canonical name from any roster
         for (const players of Object.values(ROSTERS)) {
           const p = players.find(pl => pl.name.toLowerCase() === nameLower);
           if (p) return p;
@@ -775,7 +654,6 @@ export class DraftManager {
       })
       .filter(Boolean) as Array<{ name: string; pos: string; number: string | null }>;
 
-    // Players traded away from this team
     const tradedAwayNames = new Set(
       Object.entries(this.state.playerOwnership)
         .filter(([, t]) => t !== teamAbbr)
@@ -793,7 +671,6 @@ export class DraftManager {
   }
 
   getFuturePicksForTeam(teamAbbr: string): PickSlot[] {
-    // If draft hasn't started yet, show the projected initial schedule
     const schedule = this.state.schedule.length > 0
       ? this.state.schedule
       : buildSchedule();
@@ -806,7 +683,6 @@ export class DraftManager {
     return this.state.futurePickRights.filter(r => r.currentTeam === teamAbbr);
   }
 
-  /** Find a future pick right owned by a team, by year+round. Returns the right's id. */
   resolveFuturePickRight(teamAbbr: string, year: number, round: number, originalTeam?: string): FuturePickRight | null {
     const matches = this.state.futurePickRights.filter(
       r => r.currentTeam === teamAbbr && r.year === year && r.round === round
@@ -815,18 +691,15 @@ export class DraftManager {
     if (originalTeam) {
       return matches.find(r => r.originalTeam === originalTeam) ?? null;
     }
-    // Default to the team's own pick, otherwise first match
     return matches.find(r => r.originalTeam === teamAbbr) ?? matches[0];
   }
 
-  /** Resolve a pick's overall number from round.roundPick notation (e.g. 1.5 → 5). */
   resolvePickByRoundPick(round: number, roundPick: number): number | null {
     const schedule = this.state.schedule.length > 0 ? this.state.schedule : buildSchedule();
     const slot = schedule.find(s => s.round === round && s.roundPick === roundPick);
     return slot?.overall ?? null;
   }
 
-  /** Resolve a player name from jersey number on a team's current roster. */
   resolvePlayerByJersey(teamAbbr: string, jersey: string): string | null {
     const baseRoster = ROSTERS[teamAbbr] ?? [];
     const tradedAwayNames = new Set(
@@ -850,7 +723,6 @@ export class DraftManager {
     return current.find(p => p.number === jersey)?.name ?? null;
   }
 
-  /** Get full current roster for a team (no query filter, no limit). */
   getFullRoster(teamAbbr: string): Array<{ name: string; pos: string; number: string | null }> {
     const baseRoster = ROSTERS[teamAbbr] ?? [];
     const tradedAwayNames = new Set(
@@ -873,6 +745,7 @@ export class DraftManager {
     ];
   }
 
+  // ─── Rewind ───────────────────────────────────────────────────────────────
 
   async rewind(round: number, roundPick: number): Promise<{ success: boolean; error?: string }> {
     if (this.state.status !== 'active' && this.state.status !== 'paused') {
@@ -890,7 +763,6 @@ export class DraftManager {
       return { success: false, error: 'That pick hasn\'t been made yet — nothing to rewind.' };
     }
 
-    // Undo all picks from targetIndex onwards
     const overallsToUndo = new Set(
       this.state.schedule.slice(targetIndex, this.state.currentPickIndex).map(s => s.overall)
     );
@@ -911,7 +783,6 @@ export class DraftManager {
     await this.advance();
     return { success: true };
   }
-
 
   // ─── Co-Manager Management ────────────────────────────────────────────────
 
@@ -942,68 +813,13 @@ export class DraftManager {
     return this.state.coManagers[teamAbbr] ?? [];
   }
 
-  /** Resolve a user ID to a display name, falling back to the raw ID. */
-  resolveUserName(userId: string): string {
-    return this.client.users.cache.get(userId)?.displayName ?? userId;
-  }
-
-  /** Build a ping string that mentions the GM and all co-managers for a team. */
-  getTeamPings(teamAbbr: string): string | undefined {
-    const gmId = this.state.assignments[teamAbbr];
-    if (!gmId) return undefined;
-    const coIds = this.getCoManagers(teamAbbr);
-    const mentions = [gmId, ...coIds].map(id => `<@${id}>`);
-    return mentions.join(' ');
-  }
-
-  /** Get display names for a team's GM and co-managers (for use in embeds). */
-  getTeamGMLabel(teamAbbr: string): string {
-    const gmId = this.state.assignments[teamAbbr];
-    if (!gmId) return '_unassigned_';
-    const gmName = this.resolveUserName(gmId);
-    const coIds = this.getCoManagers(teamAbbr);
-    if (coIds.length === 0) return gmName;
-    const coNames = coIds.map(id => this.resolveUserName(id));
-    return [gmName, ...coNames].join(', ');
-  }
-
-  /**
-   * Build autocomplete choices for team selection, sorted alphabetically by team name.
-   * Shows "Team Name - gmUsername" or "Team Name" if unassigned.
-   * Filters by query matching team name, abbreviation, or GM username.
-   */
-  getTeamChoices(query: string, exclude?: string): Array<{ name: string; value: string }> {
-    const q = query.toLowerCase();
-    return Object.keys(TEAMS)
-      .sort((a, b) => TEAMS[a].name.localeCompare(TEAMS[b].name))
-      .filter(abbr => abbr !== exclude)
-      .filter(abbr => {
-        if (!q) return true;
-        const gmId = this.state.assignments[abbr];
-        const gmUser = gmId ? this.client.users.cache.get(gmId) : null;
-        return abbr.toLowerCase().includes(q) ||
-          TEAMS[abbr].name.toLowerCase().includes(q) ||
-          TEAMS[abbr].city.toLowerCase().includes(q) ||
-          (gmUser?.username?.toLowerCase().includes(q) ?? false);
-      })
-      .slice(0, 25)
-      .map(abbr => {
-        const gmId = this.state.assignments[abbr];
-        const gmUser = gmId ? this.client.users.cache.get(gmId) : null;
-        const gmLabel = gmUser ? ` - ${gmUser.displayName}` : gmId ? ` - ${gmId}` : '';
-        return { name: `${TEAMS[abbr].name}${gmLabel}`.slice(0, 100), value: abbr };
-      });
-  }
-
   // ─── Admin Operations ─────────────────────────────────────────────────────
 
   async adminAssignTeam(teamAbbr: string, userId: string): Promise<{ success: boolean; error?: string }> {
     if (!TEAMS[teamAbbr]) return { success: false, error: `Unknown team: ${teamAbbr}` };
-    // Remove user from any existing team
     for (const abbr of Object.keys(this.state.assignments)) {
       if (this.state.assignments[abbr] === userId) delete this.state.assignments[abbr];
     }
-    // Remove as co-manager anywhere
     for (const abbr of Object.keys(this.state.coManagers)) {
       this.state.coManagers[abbr] = this.state.coManagers[abbr].filter(id => id !== userId);
     }
@@ -1023,6 +839,7 @@ export class DraftManager {
     return { success: true };
   }
 
+  // ─── Refresh Clock (after trade) ─────────────────────────────────────────
 
   private async refreshClock(): Promise<void> {
     const slot = this.state.schedule[this.state.currentPickIndex];
@@ -1031,10 +848,9 @@ export class DraftManager {
     const userId = this.state.assignments[slot.currentTeam] ?? null;
 
     if (!userId && this.state.config.autoPick) {
-      // New owner is CPU — pick immediately
       const bestRank = await this.getBestPickForTeam(slot.currentTeam);
       if (bestRank === undefined) return;
-      await this.recordAndAnnounce(slot, bestRank, null, true);
+      this.recordPick(slot, bestRank, null, true);
       this.state.currentPickIndex++;
       await this.persist();
       await delay(1500);
@@ -1042,17 +858,10 @@ export class DraftManager {
       return;
     }
 
-    const team = TEAMS[slot.currentTeam];
-    const embed = buildOnTheClockEmbed(slot, team, userId, this.state.config.timerSeconds);
-    await this.sendEmbed(embed, this.getTeamPings(slot.currentTeam));
+    this.emit('pick:clock', { slot, teamAbbr: slot.currentTeam });
 
     if (this.state.config.timerSeconds && userId) {
       this.startTimer();
     }
   }
-
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
 }

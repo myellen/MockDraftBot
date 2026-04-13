@@ -4,7 +4,7 @@ import {
   AutocompleteInteraction,
   EmbedBuilder,
 } from 'discord.js';
-import { DraftManager, formatCapAmount } from '../draft/DraftManager';
+import { DraftManager, formatCapAmount } from '../discord/DraftManager';
 import { TEAMS } from '../data/teams';
 import { TEAM_CAP } from '../data/capData';
 import { buildPendingTradesEmbed, buildTradeExecutedEmbed, buildTradeChartUrl } from '../utils/embeds';

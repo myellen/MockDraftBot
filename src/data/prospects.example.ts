@@ -1,4 +1,4 @@
-import { Prospect } from '../draft/types';
+import { Prospect } from '../engine/types';
 
 // Replace with your full prospect list sourced from a big board (e.g. DraftTek, PFF, etc.)
 // Positions: QB, RB, WR, TE, OT, OG, C, EDGE, DT, DE, LB, CB, S, K, P

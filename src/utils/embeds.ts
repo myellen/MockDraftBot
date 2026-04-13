@@ -1,6 +1,5 @@
 import { EmbedBuilder } from 'discord.js';
-import { CompletedPick, PickSlot, PendingTrade, FuturePickRight } from '../draft/types';
-import { Team } from '../draft/types';
+import { CompletedPick, PickSlot, PendingTrade, FuturePickRight, Team } from '../engine/types';
 import { ordinal } from './ordinal';
 
 const DEFAULT_COLOR = 0xFFB612;

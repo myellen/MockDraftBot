@@ -48,7 +48,7 @@ export interface CompletedPick {
 export type TradeAnnouncement = 'private' | 'public' | 'intrigue' | 'insider';
 
 export interface DraftConfig {
-  channelId: string | null;
+  channelId: string | null;          // opaque to engine; adapter reads it for routing
   timerSeconds: number | null;
   autoPick: boolean;
   rounds: number;   // how many rounds to simulate (default 7)
@@ -117,7 +117,7 @@ export interface PickResult {
   success: boolean;
   error?: string;
   pick?: CompletedPick;
-  completionEmbeds?: import('discord.js').EmbedBuilder[];  // set when this pick ends the draft
+  draftComplete?: boolean; // true when this pick (or autopick) ends the draft
 }
 
 export interface RegisterResult {

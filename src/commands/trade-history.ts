@@ -1,9 +1,9 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder } from 'discord.js';
-import { DraftManager } from '../draft/DraftManager';
+import { DraftManager } from '../discord/DraftManager';
 import { TEAMS } from '../data/teams';
 import { TEAM_EMOJI } from '../utils/teamEmoji';
 import { buildTradeChartUrl } from '../utils/embeds';
-import { PendingTrade, PickSlot } from '../draft/types';
+import { PendingTrade, PickSlot } from '../engine/types';
 
 export const data = new SlashCommandBuilder()
   .setName('trade-history')

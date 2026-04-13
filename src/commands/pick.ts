@@ -1,5 +1,5 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction, AutocompleteInteraction, EmbedBuilder } from 'discord.js';
-import { DraftManager } from '../draft/DraftManager';
+import { DraftManager } from '../discord/DraftManager';
 import { TEAMS } from '../data/teams';
 import { ordinal } from '../utils/ordinal';
 
@@ -67,12 +67,9 @@ export async function execute(
     ]
   });
 
-  // If this pick ended the draft, send completion embeds
-  if (result.completionEmbeds?.length) {
-    for (let i = 0; i < result.completionEmbeds.length; i += 10) {
-      await interaction.followUp({ embeds: result.completionEmbeds.slice(i, i + 10) });
-    }
-  } else {
+  // If this pick ended the draft, the engine's draft:complete event
+  // already sent completion embeds via the adapter's channel subscription.
+  if (!result.draftComplete) {
     // Announce who is now on the clock
     const nextSlot = manager.getCurrentSlot();
     if (nextSlot) {

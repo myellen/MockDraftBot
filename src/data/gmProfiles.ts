@@ -17,7 +17,7 @@
  *   The Veteran    — balanced, no strong bias in either direction
  */
 
-import type { ValueChartType } from '../draft/tradeValue';
+import type { ValueChartType } from '../engine/tradeValue';
 
 export type GMArchetype =
   | 'closer'

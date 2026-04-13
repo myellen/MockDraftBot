@@ -1,22 +1,21 @@
-import { EmbedBuilder } from 'discord.js';
 import {
   DraftState, PendingTrade, CancelledTrade, TeamCapInfo, TradeCancelReason,
 } from './types';
+import type { DraftEventMap } from './events';
 import { TEAMS } from '../data/teams';
 import { TEAM_CAP, TRADE_PLAYERS, TradePlayerValues } from '../data/capData';
 import { SALARY_CAP, ROOKIE_MINIMUM, getRookieCapHit } from '../data/salaries';
-import { buildTradeExecutedEmbed } from '../utils/embeds';
 
 // ─── Host interface ──────────────────────────────────────────────────────────
 
-export interface TradeManagerHost {
+export interface TradeEngineHost {
   persist(): Promise<void>;
-  sendEmbed(embed: EmbedBuilder, content?: string): Promise<void>;
   getUserTeam(userId: string): string | null;
   isAuthorizedForTeam(userId: string, teamAbbr: string): boolean;
   resolvePlayer(nameQuery: string, teamAbbr: string): string | null;
   clearTimer(): void;
   refreshClock(): Promise<void>;
+  emit<K extends keyof DraftEventMap>(event: K, data: DraftEventMap[K]): void;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -34,22 +33,23 @@ export function formatCapAmount(amountInThousands: number): string {
   return `${amountInThousands}K`;
 }
 
-// ─── TradeManager ────────────────────────────────────────────────────────────
+// ─── TradeEngine ─────────────────────────────────────────────────────────────
 
-export class TradeManager {
+export class TradeEngine {
   constructor(
     private state: DraftState,
-    private host: TradeManagerHost,
+    private host: TradeEngineHost,
   ) {}
 
   private cancelTrades(trades: PendingTrade[], reason: TradeCancelReason): void {
     const now = Date.now();
     for (const t of trades) {
       this.state.cancelledTrades.push({ ...t, cancelReason: reason, cancelledAt: now });
+      this.host.emit('trade:cancelled', { trade: t, reason });
     }
   }
 
-  /** Execute a trade: swap ownership, record history, announce, refresh clock. */
+  /** Execute a trade: swap ownership, record history, emit event, refresh clock. */
   private async executeTradeSideEffects(trade: PendingTrade): Promise<void> {
     for (const overall of trade.offeredOveralls) {
       const slot = this.state.schedule.find(s => s.overall === overall);
@@ -78,7 +78,7 @@ export class TradeManager {
 
     this.state.tradeHistory.push(trade);
     await this.host.persist();
-    await this.host.sendEmbed(buildTradeExecutedEmbed(trade, TEAMS, this.state.schedule));
+    this.host.emit('trade:executed', { trade });
 
     const currentSlot = this.state.schedule[this.state.currentPickIndex];
     const involvedPicks = new Set([...trade.offeredOveralls, ...trade.requestedOveralls]);
@@ -108,6 +108,39 @@ export class TradeManager {
     );
   }
 
+  /**
+   * Execute a pre-built trade from the AI GM system.
+   * Validates pick availability and salary cap, cancels superseded human trades.
+   */
+  async executeCPUTrade(
+    trade: PendingTrade,
+  ): Promise<{ success: boolean; error?: string; trade?: PendingTrade }> {
+    if (!this.state.config.allowPlayerTrades && (trade.offeredPlayers.length > 0 || trade.requestedPlayers.length > 0)) {
+      return { success: false, error: 'Player trades are disabled.' };
+    }
+
+    const futurePicks = this.state.schedule.slice(this.state.currentPickIndex);
+    for (const overall of trade.offeredOveralls) {
+      const slot = futurePicks.find(s => s.overall === overall);
+      if (!slot || slot.currentTeam !== trade.proposerTeam) {
+        return { success: false, error: `Pick #${overall} is no longer available.` };
+      }
+    }
+    for (const overall of trade.requestedOveralls) {
+      const slot = futurePicks.find(s => s.overall === overall);
+      if (!slot || slot.currentTeam !== trade.receiverTeam) {
+        return { success: false, error: `Pick #${overall} is no longer available.` };
+      }
+    }
+
+    const capCheck = this.validateTradeCap(trade);
+    if (!capCheck.valid) return { success: false, error: capCheck.error };
+
+    this.cancelSupersededPendingTrades(trade);
+    await this.executeTradeSideEffects(trade);
+    return { success: true, trade };
+  }
+
   // ─── Salary Cap ───────────────────────────────────────────────────────────
 
   /**
@@ -124,8 +157,6 @@ export class TradeManager {
 
   /**
    * Compute a team's current salary cap situation.
-   * Starts from the pre-draft team cap space (from OTC) and adjusts for
-   * in-draft trades and rookie picks.
    */
   getTeamCapInfo(teamAbbr: string): TeamCapInfo {
     const baseline = TEAM_CAP[teamAbbr];
@@ -136,25 +167,20 @@ export class TradeManager {
     let capSpaceAdj = baseline.capSpace;
     let deadMoney = baseline.deadMoney;
 
-    // 1. Adjust for in-draft trades (iterate trade history)
     for (const trade of this.state.tradeHistory) {
-      // Players this team SENT away
       const sentPlayers = trade.proposerTeam === teamAbbr ? trade.offeredPlayers
         : trade.receiverTeam === teamAbbr ? trade.requestedPlayers : [];
       for (const name of sentPlayers) {
         const pv = this.getTradePlayerValues(name.toLowerCase());
         if (!pv) continue;
         if (pv.origTeam === teamAbbr) {
-          // Original team sends player: shed capHit, keep deadCap
           capSpaceAdj += pv.values.capHit - pv.values.deadCap;
           deadMoney += pv.values.deadCap;
         } else {
-          // Re-trading a player acquired via trade: shed incomingCap
           capSpaceAdj += pv.values.incomingCap;
         }
       }
 
-      // Players this team RECEIVED
       const recvPlayers = trade.proposerTeam === teamAbbr ? trade.requestedPlayers
         : trade.receiverTeam === teamAbbr ? trade.offeredPlayers : [];
       for (const name of recvPlayers) {
@@ -163,7 +189,6 @@ export class TradeManager {
         capSpaceAdj -= pv.values.incomingCap;
       }
 
-      // Draft picks traded (rookie slot obligation follows the pick)
       const sentPicks = trade.proposerTeam === teamAbbr ? trade.offeredOveralls
         : trade.receiverTeam === teamAbbr ? trade.requestedOveralls : [];
       for (const overall of sentPicks) {
@@ -176,14 +201,12 @@ export class TradeManager {
       }
     }
 
-    // 2. Subtract rookie cap hits for players already drafted by this team
     for (const pick of this.state.picks) {
       if (pick.team === teamAbbr) {
         capSpaceAdj -= getRookieCapHit(pick.overall);
       }
     }
 
-    // 3. Project undrafted picks this team owns (future rookie slot obligations)
     let projectedRookieCap = 0;
     const futurePicks = this.state.schedule.slice(this.state.currentPickIndex);
     for (const slot of futurePicks) {
@@ -205,10 +228,6 @@ export class TradeManager {
     };
   }
 
-  /**
-   * Calculate the cap impact of a trade for both teams BEFORE execution.
-   * Returns the cap space change for each team (negative = less space).
-   */
   calculateTradeCapImpact(trade: PendingTrade): {
     proposerCapChange: number;
     receiverCapChange: number;
@@ -221,25 +240,19 @@ export class TradeManager {
     let proposerCapDelta = 0;
     let receiverCapDelta = 0;
 
-    // ── Player cap impact ─────────────────────────────────────────────────────
-
-    // Players proposer sends to receiver
     for (const name of trade.offeredPlayers) {
       const pv = this.getTradePlayerValues(name.toLowerCase());
       if (!pv) continue;
 
       if (pv.origTeam === trade.proposerTeam) {
-        // Sender loses capHit, keeps deadCap; receiver takes on incomingCap
         proposerCapDelta += pv.values.capHit - pv.values.deadCap;
         receiverCapDelta -= pv.values.incomingCap;
       } else {
-        // Player was traded to proposer previously — shed incomingCap
         proposerCapDelta += pv.values.incomingCap;
         receiverCapDelta -= pv.values.incomingCap;
       }
     }
 
-    // Players receiver sends to proposer
     for (const name of trade.requestedPlayers) {
       const pv = this.getTradePlayerValues(name.toLowerCase());
       if (!pv) continue;
@@ -253,7 +266,6 @@ export class TradeManager {
       }
     }
 
-    // ── Draft pick cap impact ─────────────────────────────────────────────────
     for (const overall of trade.offeredOveralls) {
       const netSlot = Math.max(0, getRookieCapHit(overall) - ROOKIE_MINIMUM);
       proposerCapDelta += netSlot;
@@ -273,9 +285,6 @@ export class TradeManager {
     };
   }
 
-  /**
-   * Validate that a trade would not put either team over the salary cap.
-   */
   validateTradeCap(trade: PendingTrade): { valid: boolean; error?: string; warnings: string[] } {
     const warnings: string[] = [];
     const hasPlayerOrPickAssets = trade.offeredPlayers.length > 0 || trade.requestedPlayers.length > 0
@@ -392,7 +401,6 @@ export class TradeManager {
       if (slot.currentTeam !== receiverTeam) return { success: false, error: `Pick #${overall} does not belong to ${TEAMS[receiverTeam]?.name}.` };
     }
 
-    // Validate offered players belong to proposer
     const resolvedOfferedPlayers: string[] = [];
     for (const name of offeredPlayers) {
       const result = this.host.resolvePlayer(name, proposerTeam);
@@ -400,7 +408,6 @@ export class TradeManager {
       resolvedOfferedPlayers.push(result);
     }
 
-    // Validate requested players belong to receiver
     const resolvedRequestedPlayers: string[] = [];
     for (const name of requestedPlayers) {
       const result = this.host.resolvePlayer(name, receiverTeam);
@@ -408,7 +415,6 @@ export class TradeManager {
       resolvedRequestedPlayers.push(result);
     }
 
-    // Validate future pick rights
     for (const id of offeredFuturePickIds) {
       const right = this.state.futurePickRights.find(r => r.id === id);
       if (!right) return { success: false, error: `Future pick "${id}" not found.` };
@@ -436,7 +442,6 @@ export class TradeManager {
       expiresAt: Date.now() + 24 * 60 * 60 * 1000,
     };
 
-    // Validate salary cap implications
     const capCheck = this.validateTradeCap(trade);
     if (!capCheck.valid) return { success: false, error: capCheck.error };
 
@@ -470,7 +475,6 @@ export class TradeManager {
       }
     }
 
-    // Re-validate salary cap at acceptance time
     const capCheck = this.validateTradeCap(trade);
     if (!capCheck.valid) return { success: false, error: capCheck.error };
 
@@ -499,7 +503,6 @@ export class TradeManager {
     const trade = this.state.tradeHistory.find(t => t.id === tradeId);
     if (!trade) return { success: false, error: 'Trade not found in history.' };
 
-    // Reverse pick ownership
     for (const overall of trade.offeredOveralls) {
       const slot = this.state.schedule.find(s => s.overall === overall);
       if (slot) slot.currentTeam = trade.proposerTeam;
@@ -509,7 +512,6 @@ export class TradeManager {
       if (slot) slot.currentTeam = trade.receiverTeam;
     }
 
-    // Reverse player ownership
     for (const name of trade.offeredPlayers) {
       this.state.playerOwnership[name.toLowerCase()] = trade.proposerTeam;
     }
@@ -517,7 +519,6 @@ export class TradeManager {
       this.state.playerOwnership[name.toLowerCase()] = trade.receiverTeam;
     }
 
-    // Reverse future pick rights
     for (const id of trade.offeredFuturePicks) {
       const right = this.state.futurePickRights.find(r => r.id === id);
       if (right) right.currentTeam = trade.proposerTeam;
@@ -561,44 +562,9 @@ export class TradeManager {
       expiresAt: Date.now() + 24 * 60 * 60 * 1000,
     };
 
-    // Validate salary cap (even for admin — use /draft set-cap off to bypass)
     const capCheck = this.validateTradeCap(trade);
     if (!capCheck.valid) return { success: false, error: capCheck.error };
 
-    await this.executeTradeSideEffects(trade);
-    return { success: true, trade };
-  }
-
-  /**
-   * Execute a pre-built trade from the AI GM system.
-   * Validates pick availability and salary cap, cancels superseded human trades.
-   */
-  async executeCPUTrade(
-    trade: PendingTrade,
-  ): Promise<{ success: boolean; error?: string; trade?: PendingTrade }> {
-    if (!this.state.config.allowPlayerTrades && (trade.offeredPlayers.length > 0 || trade.requestedPlayers.length > 0)) {
-      return { success: false, error: 'Player trades are disabled.' };
-    }
-
-    // Validate picks are still available in future schedule
-    const futurePicks = this.state.schedule.slice(this.state.currentPickIndex);
-    for (const overall of trade.offeredOveralls) {
-      const slot = futurePicks.find(s => s.overall === overall);
-      if (!slot || slot.currentTeam !== trade.proposerTeam) {
-        return { success: false, error: `Pick #${overall} is no longer available.` };
-      }
-    }
-    for (const overall of trade.requestedOveralls) {
-      const slot = futurePicks.find(s => s.overall === overall);
-      if (!slot || slot.currentTeam !== trade.receiverTeam) {
-        return { success: false, error: `Pick #${overall} is no longer available.` };
-      }
-    }
-
-    const capCheck = this.validateTradeCap(trade);
-    if (!capCheck.valid) return { success: false, error: capCheck.error };
-
-    this.cancelSupersededPendingTrades(trade);
     await this.executeTradeSideEffects(trade);
     return { success: true, trade };
   }

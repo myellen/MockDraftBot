@@ -1,5 +1,5 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder } from 'discord.js';
-import { DraftManager } from '../draft/DraftManager';
+import { DraftManager } from '../discord/DraftManager';
 import { TEAMS } from '../data/teams';
 
 export const data = new SlashCommandBuilder()
@@ -29,9 +29,5 @@ export async function execute(
     ]
   });
 
-  if (result.completionEmbeds?.length) {
-    for (let i = 0; i < result.completionEmbeds.length; i += 10) {
-      await interaction.followUp({ embeds: result.completionEmbeds.slice(i, i + 10) });
-    }
-  }
+  // If draft completed, engine's draft:complete event handles embeds via adapter.
 }

@@ -4,7 +4,7 @@ import {
   AutocompleteInteraction,
   EmbedBuilder,
 } from 'discord.js';
-import { DraftManager } from '../draft/DraftManager';
+import { DraftManager } from '../discord/DraftManager';
 import { TEAMS } from '../data/teams';
 import { isOllamaConfigured, chatText } from '../llm/OllamaService';
 import { INSIDERS, buildReporterPrompt } from './rumor';

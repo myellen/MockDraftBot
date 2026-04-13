@@ -1,5 +1,5 @@
 import { ChatInputCommandInteraction, AutocompleteInteraction } from 'discord.js';
-import { DraftManager } from '../draft/DraftManager';
+import { DraftManager } from '../discord/DraftManager';
 
 import * as draftCmd   from './draft';
 import * as pickCmd    from './pick';

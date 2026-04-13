@@ -11,7 +11,7 @@
 
 import { chatJSON } from './OllamaService';
 import { GMProfile } from '../data/gmProfiles';
-import { getPickValue, getValueChartPrompt, evaluateTradeValue, type ValueChartType } from '../draft/tradeValue';
+import { getPickValue, getValueChartPrompt, evaluateTradeValue, type ValueChartType } from '../engine/tradeValue';
 import { PROSPECT_BY_RANK } from '../data/prospects';
 import { TEAMS } from '../data/teams';
 
@@ -123,7 +123,7 @@ export async function evaluateIncomingTrade(
     { overalls: proposal.requestedOveralls, futurePickIds: proposal.requestedFuturePicks },
     { overalls: proposal.offeredOveralls, futurePickIds: proposal.offeredFuturePicks },
     chart,
-    id => {
+    (id: string) => {
       const fp = ctx.teamFuturePicks.find(f => f.id === id);
       return fp ? { year: fp.year, round: fp.round } : null;
     },
