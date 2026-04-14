@@ -56,6 +56,8 @@ export interface DraftConfig {
   tradeAnnouncement: TradeAnnouncement; // how trade proposals are announced (default 'intrigue')
   enforceSalaryCap: boolean; // whether to validate trades against salary cap (default false)
   cpuTrading: boolean; // whether CPU teams can propose/accept/counter trades (default false)
+  simulationMode: boolean; // no LLM timeouts, no deliberation deadline — let every prompt finish
+  gmExtraResearch: boolean; // AI GMs research prospects via board-ai before picking (requires simulationMode)
 }
 
 export interface FuturePickRight {

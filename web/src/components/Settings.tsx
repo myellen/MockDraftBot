@@ -117,6 +117,30 @@ export function Settings({ roomCode, state, isAdmin }: SettingsProps) {
           </label>
         </div>
 
+        {/* Simulation Mode */}
+        <div className="setting-row">
+          <div className="setting-label">
+            Simulation Mode
+            <small>No timeouts — every AI prompt runs to completion</small>
+          </div>
+          <label className="toggle">
+            <input type="checkbox" checked={merged.simulationMode} onChange={e => setField('simulationMode', e.target.checked)} />
+            <span className="toggle-slider" />
+          </label>
+        </div>
+
+        {/* GM Extra Research */}
+        <div className="setting-row">
+          <div className="setting-label">
+            GM Extra Research
+            <small>AI GMs research prospects before picking (requires Simulation Mode)</small>
+          </div>
+          <label className="toggle">
+            <input type="checkbox" checked={merged.gmExtraResearch} onChange={e => setField('gmExtraResearch', e.target.checked)} disabled={!merged.simulationMode} />
+            <span className="toggle-slider" />
+          </label>
+        </div>
+
         {/* Trade Announcement */}
         <div className="setting-row">
           <div className="setting-label">

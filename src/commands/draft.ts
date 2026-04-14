@@ -66,6 +66,16 @@ export const data = new SlashCommandBuilder()
       .setDescription('Allow CPU teams to propose and accept trades (default: false)')
       .setRequired(false)
     )
+    .addBooleanOption(opt => opt
+      .setName('simulation-mode')
+      .setDescription('No LLM timeouts — every AI prompt runs to completion (default: false)')
+      .setRequired(false)
+    )
+    .addBooleanOption(opt => opt
+      .setName('gm-extra-research')
+      .setDescription('AI GMs research prospects before picking — requires simulation mode (default: false)')
+      .setRequired(false)
+    )
   )
   .addSubcommand(sub => sub
     .setName('register')
@@ -271,6 +281,8 @@ export async function execute(
     const tradeAnnouncement = (interaction.options.getString('trade-announcement') ?? 'intrigue') as TradeAnnouncement;
     const enforceSalaryCap = interaction.options.getBoolean('enforce-salary-cap') ?? false;
     const cpuTrading = interaction.options.getBoolean('cpu-trading') ?? false;
+    const simulationMode = interaction.options.getBoolean('simulation-mode') ?? false;
+    const gmExtraResearch = interaction.options.getBoolean('gm-extra-research') ?? false;
 
     await manager.setup({
       channelId: channel.id,
@@ -281,6 +293,8 @@ export async function execute(
       tradeAnnouncement,
       enforceSalaryCap,
       cpuTrading,
+      simulationMode,
+      gmExtraResearch,
     });
 
     const timerStr = timer ? `${timer}m per pick` : 'No timer';
@@ -297,6 +311,8 @@ export async function execute(
             { name: 'Player Trades', value: allowPlayerTrades ? 'On' : 'Off', inline: true },
             { name: 'Trade Announcements', value: tradeAnnouncement.charAt(0).toUpperCase() + tradeAnnouncement.slice(1), inline: true },
             { name: 'Salary Cap', value: enforceSalaryCap ? 'Enforced' : 'Off', inline: true },
+            { name: 'Simulation', value: simulationMode ? 'On' : 'Off', inline: true },
+            { name: 'GM Research', value: gmExtraResearch ? 'On' : 'Off', inline: true },
           )
           .setDescription('Now have GMs register their teams with `/draft register`, then use `/draft start` when ready.')
       ]

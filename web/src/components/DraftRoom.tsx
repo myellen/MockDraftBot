@@ -68,52 +68,35 @@ export function DraftRoom({ roomCode, token, isAdmin, onLeave }: DraftRoomProps)
         setState(data as DraftState);
       }),
       ws.on('pick:made', (data: { pick: CompletedPick }) => {
-        setState(prev => prev ? { ...prev } : prev);
         addFeedItem('pick-made', data.pick);
-        // Re-fetch full state for consistency
-        api.getState(roomCode).then(d => {
-          setState(d.state);
-          // Check for round change
-          const slot = d.state?.schedule?.[d.state?.currentPickIndex ?? 0];
+      }),
+      ws.on('pick:clock', (_data) => {
+        // State arrives via state:snapshot — check for round change
+        setState(prev => {
+          if (!prev) return prev;
+          const slot = prev.schedule?.[prev.currentPickIndex];
           if (slot && slot.round !== lastRoundRef.current) {
             addFeedItem('round-change', { round: slot.round });
             lastRoundRef.current = slot.round;
           }
+          return prev;
         });
       }),
-      ws.on('pick:clock', () => {
-        api.getState(roomCode).then(d => setState(d.state));
-      }),
       ws.on('draft:started', () => {
-        api.getState(roomCode).then(d => setState(d.state));
         addFeedItem('round-change', { round: 1 });
         lastRoundRef.current = 1;
       }),
-      ws.on('draft:paused', () => {
-        api.getState(roomCode).then(d => setState(d.state));
-      }),
-      ws.on('draft:resumed', () => {
-        api.getState(roomCode).then(d => setState(d.state));
-      }),
-      ws.on('draft:complete', () => {
-        api.getState(roomCode).then(d => setState(d.state));
-      }),
       ws.on('draft:reset', () => {
-        api.getState(roomCode).then(d => setState(d.state));
         setFeedItems([]);
         setCpuOffers([]);
         setTradeResults([]);
       }),
       ws.on('trade:executed', (data: { trade: PendingTrade }) => {
-        api.getState(roomCode).then(d => setState(d.state));
         addFeedItem('trade-executed', data.trade);
-        // Track accepted result for trades we proposed
         setTradeResults(prev => [{ trade: data.trade, accepted: true }, ...prev]);
       }),
       ws.on('trade:cancelled', (data: { trade: PendingTrade; reason: string; reasoning?: string }) => {
-        api.getState(roomCode).then(d => setState(d.state));
         addFeedItem('trade-cancelled', data);
-        // Track declined result for trades we proposed
         if (data.reasoning) {
           setTradeResults(prev => [{ trade: data.trade, accepted: false, reasoning: data.reasoning }, ...prev]);
         }
@@ -122,12 +105,10 @@ export function DraftRoom({ roomCode, token, isAdmin, onLeave }: DraftRoomProps)
         addFeedItem('trade-chatter', data);
       }),
       ws.on('cpu-offer:sent', (data) => {
-        api.getState(roomCode).then(d => setState(d.state));
         setCpuOffers(prev => [data.offer as CPUOffer, ...prev]);
         addFeedItem('cpu-offer', data.offer);
       }),
       ws.on('cpu-offer:resolved', (data) => {
-        api.getState(roomCode).then(d => setState(d.state));
         const resolved = data as { offerId?: string };
         if (resolved.offerId) {
           setCpuOffers(prev => prev.filter(o => o.id !== resolved.offerId));

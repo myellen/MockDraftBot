@@ -7,6 +7,7 @@ import { DraftManager, formatCapAmount } from '../discord/DraftManager';
 import { TEAMS } from '../data/teams';
 import { TEAM_CAP } from '../data/capData';
 import { buildTradeChartUrl } from '../utils/embeds';
+import { ConversationHistory } from '../utils/conversationHistory';
 import { isOllamaConfigured, chatJSONWithHistory } from '../llm/OllamaService';
 import { buildInsiderTradeEmbed } from './rumor';
 
@@ -33,27 +34,7 @@ interface TradeAIResponse {
 }
 
 // ── In-memory conversation history per user (resets on restart) ──
-interface ConversationEntry {
-  role: 'user' | 'assistant';
-  content: string;
-}
-const MAX_HISTORY = 6; // keep last 3 exchanges
-const conversations = new Map<string, ConversationEntry[]>();
-
-function getHistory(userId: string): ConversationEntry[] {
-  return conversations.get(userId) ?? [];
-}
-
-function addToHistory(userId: string, role: 'user' | 'assistant', content: string): void {
-  const history = conversations.get(userId) ?? [];
-  history.push({ role, content });
-  if (history.length > MAX_HISTORY) history.splice(0, history.length - MAX_HISTORY);
-  conversations.set(userId, history);
-}
-
-function clearHistory(userId: string): void {
-  conversations.delete(userId);
-}
+const conversations = new ConversationHistory(6); // keep last 3 exchanges
 
 /**
  * Build a full context snapshot for the LLM trade agent.
@@ -296,23 +277,23 @@ export async function execute(
 
     console.log(`[trade-ai] Prompt length: ${systemPrompt.length} chars, ~${Math.ceil(systemPrompt.length / 4)} tokens`);
 
-    const history = getHistory(interaction.user.id);
+    const history = conversations.get(interaction.user.id);
     const result = await chatJSONWithHistory<TradeAIResponse>(systemPrompt, history, description);
     console.log(`[trade-ai] LLM response: target=${result.targetTeam}, offeredPicks=${JSON.stringify(result.offeredPicks)}, requestedPicks=${JSON.stringify(result.requestedPicks)}, offeredPlayers=${JSON.stringify(result.offeredPlayers)}, requestedPlayers=${JSON.stringify(result.requestedPlayers)}, clarification=${result.clarification ?? 'none'}, error=${result.error ?? 'none'}`);
 
     // Save user input to history
-    addToHistory(interaction.user.id, 'user', description);
+    conversations.add(interaction.user.id, 'user', description);
 
     if (result.error) {
       const errorResponse = `❌ ${result.error}`;
-      addToHistory(interaction.user.id, 'assistant', errorResponse);
+      conversations.add(interaction.user.id, 'assistant', errorResponse);
       await interaction.editReply(errorResponse);
       return;
     }
 
     // Handle clarification — AI wants user to confirm or clarify before proposing
     if (result.clarification) {
-      addToHistory(interaction.user.id, 'assistant', JSON.stringify(result));
+      conversations.add(interaction.user.id, 'assistant', JSON.stringify(result));
       await interaction.editReply(`🤔 ${result.clarification}`);
       return;
     }
@@ -320,7 +301,7 @@ export async function execute(
     // Validate target team
     if (!result.targetTeam || !TEAMS[result.targetTeam]) {
       const msg = `Couldn't determine which team. Try being more specific (e.g. "the Cowboys" or "DAL").`;
-      addToHistory(interaction.user.id, 'assistant', msg);
+      conversations.add(interaction.user.id, 'assistant', msg);
       await interaction.editReply(`❌ ${msg}`);
       return;
     }
@@ -330,7 +311,7 @@ export async function execute(
     const isCPUTarget = !receiverUserId;
     if (isCPUTarget && !manager.getConfig().cpuTrading) {
       const msg = `The **${TEAMS[result.targetTeam]?.name}** don't have a registered GM. No one to trade with.`;
-      addToHistory(interaction.user.id, 'assistant', msg);
+      conversations.add(interaction.user.id, 'assistant', msg);
       await interaction.editReply(`❌ ${msg}`);
       return;
     }
@@ -419,7 +400,7 @@ export async function execute(
       if (evaluation.decision === 'accept') {
         const execResult = await manager.trades.executeCPUTrade(cpuTrade);
         if (execResult.success) {
-          clearHistory(interaction.user.id);
+          conversations.clear(interaction.user.id);
           await interaction.editReply(summary + `\n\nThe **${targetTeamName}** GM accepted! *"${evaluation.reasoning}"*`);
         } else {
           await interaction.editReply(summary + `\n\nThe GM wanted to accept, but: ${execResult.error}`);
@@ -430,13 +411,13 @@ export async function execute(
         const fmtFut = (f: string[]) => f.length ? `future ${f.join(', ')}` : '';
         const coOffer = [fmtPicks(co.offeredOveralls), fmtFut(co.offeredFuturePicks)].filter(Boolean).join(' + ') || 'nothing';
         const coReq = [fmtPicks(co.requestedOveralls), fmtFut(co.requestedFuturePicks)].filter(Boolean).join(' + ') || 'nothing';
-        addToHistory(interaction.user.id, 'assistant', `Counter from ${targetTeamName}: they send ${coOffer}, want ${coReq}`);
+        conversations.add(interaction.user.id, 'assistant', `Counter from ${targetTeamName}: they send ${coOffer}, want ${coReq}`);
         await interaction.editReply(
           summary + `\n\nThe **${targetTeamName}** GM countered!\n*"${evaluation.reasoning}"*\n` +
           `**Counter:** They send ${coOffer}, they want ${coReq}`
         );
       } else {
-        addToHistory(interaction.user.id, 'assistant', `${targetTeamName} declined: ${evaluation.reasoning}`);
+        conversations.add(interaction.user.id, 'assistant', `${targetTeamName} declined: ${evaluation.reasoning}`);
         await interaction.editReply(summary + `\n\nThe **${targetTeamName}** GM declined. *"${evaluation.reasoning}"*`);
       }
       return;
@@ -456,7 +437,7 @@ export async function execute(
 
     if (!tradeResult.success) {
       const failMsg = `Trade proposal failed: ${tradeResult.error}`;
-      addToHistory(interaction.user.id, 'assistant', failMsg);
+      conversations.add(interaction.user.id, 'assistant', failMsg);
       await interaction.followUp({
         content: `❌ ${failMsg}`,
         ephemeral: true,
@@ -496,7 +477,7 @@ export async function execute(
     );
 
     // Clear conversation history after a successful proposal
-    clearHistory(interaction.user.id);
+    conversations.clear(interaction.user.id);
 
     // Public announcement based on draft settings
     const announcement = manager.getConfig().tradeAnnouncement;

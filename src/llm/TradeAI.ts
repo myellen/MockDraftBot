@@ -9,7 +9,7 @@
  * Each wraps a chatJSON call with an 8-second timeout.
  */
 
-import { chatJSON } from './OllamaService';
+import { chatJSON, LLMAbortError } from './OllamaService';
 import { GMProfile } from '../data/gmProfiles';
 import { getPickValue, getValueChartPrompt, evaluateTradeValue, type ValueChartType } from '../engine/tradeValue';
 import { PROSPECT_BY_RANK } from '../data/prospects';
@@ -71,18 +71,30 @@ export interface TradeAIContext {
   tradeablePlayers: TradeablePlayer[];
   /** Recent insider tweets that may influence trade decisions. */
   recentLeaks?: string[];
+  /** Top available prospect ranks from the GM's board. */
+  boardTopRanks?: number[];
 }
 
 const LLM_TIMEOUT_MS = 15000;
 const LLM_TIMEOUT_HUMAN_MS = 20000; // longer timeout for human-initiated trades
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs = LLM_TIMEOUT_MS): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('TradeAI LLM timeout')), timeoutMs),
-    ),
-  ]);
+/**
+ * Run an LLM call with a timeout-backed AbortController.
+ * The factory receives a composed signal (timeout + optional outer signal).
+ * When the timeout fires, the signal aborts so withSlot can skip queued calls.
+ */
+function withAbortableTimeout<T>(
+  factory: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+  outerSignal?: AbortSignal,
+): Promise<T> {
+  const controller = new AbortController();
+  const signal = outerSignal
+    ? AbortSignal.any([controller.signal, outerSignal])
+    : controller.signal;
+  if (timeoutMs <= 0) return factory(signal); // simulation mode — no timeout
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return factory(signal).finally(() => clearTimeout(timer));
 }
 
 function buildPickList(overalls: number[], chart: ValueChartType): string {
@@ -159,6 +171,8 @@ export async function evaluateIncomingTrade(
     requestedPlayers?: string[];
   },
   humanInitiated = false,
+  timeoutMs?: number,
+  signal?: AbortSignal,
 ): Promise<TradeEvaluation | null> {
   const start = Date.now();
   const chart = profile.valueChart;
@@ -203,8 +217,11 @@ ${ctx.strategyPrompt ? `Strategy: ${ctx.strategyPrompt}` : ''}
 Top available prospects: ${buildAvailableProspects(ctx.availableRanks)}${leakInfo}`;
 
   try {
-    const timeout = humanInitiated ? LLM_TIMEOUT_HUMAN_MS : LLM_TIMEOUT_MS;
-    const raw = await withTimeout(chatJSON<RawTradeEval>(system, userMsg), timeout);
+    const timeout = timeoutMs ?? (humanInitiated ? LLM_TIMEOUT_HUMAN_MS : LLM_TIMEOUT_MS);
+    const raw = await withAbortableTimeout(
+      (sig) => chatJSON<RawTradeEval>(system, userMsg, { signal: sig }),
+      timeout, signal,
+    );
     const decision = raw.decision?.toLowerCase();
     if (decision !== 'accept' && decision !== 'decline' && decision !== 'counter') return null;
 
@@ -225,7 +242,11 @@ Top available prospects: ${buildAvailableProspects(ctx.availableRanks)}${leakInf
     };
   } catch (err) {
     const ms = Date.now() - start;
-    console.warn(`[TradeAI] evaluateIncomingTrade failed for ${ctx.teamAbbr} (${ms}ms):`, err instanceof Error ? err.message : err);
+    if (err instanceof LLMAbortError) {
+      console.log(`[TradeAI] evaluateIncomingTrade aborted for ${ctx.teamAbbr} (${ms}ms)`);
+    } else {
+      console.warn(`[TradeAI] evaluateIncomingTrade failed for ${ctx.teamAbbr} (${ms}ms):`, err instanceof Error ? err.message : err);
+    }
     return null;
   }
 }
@@ -247,6 +268,8 @@ interface RawTradeIdea {
 export async function generateTradeIdea(
   profile: GMProfile,
   ctx: TradeAIContext,
+  timeoutMs?: number,
+  signal?: AbortSignal,
 ): Promise<TradeIdea | null> {
   const start = Date.now();
 
@@ -292,7 +315,10 @@ Other teams' remaining picks:
 ${partnerSummary}${leakInfo}`;
 
   try {
-    const raw = await withTimeout(chatJSON<RawTradeIdea>(system, userMsg));
+    const raw = await withAbortableTimeout(
+      (sig) => chatJSON<RawTradeIdea>(system, userMsg, { signal: sig }),
+      timeoutMs ?? LLM_TIMEOUT_MS, signal,
+    );
     if (raw.noTrade || !raw.partnerTeam) {
       console.log(`[TradeAI] generateTradeIdea for ${ctx.teamAbbr}: ${Date.now() - start}ms → no-idea`);
       return null;
@@ -317,7 +343,11 @@ ${partnerSummary}${leakInfo}`;
     return idea;
   } catch (err) {
     const ms = Date.now() - start;
-    console.warn(`[TradeAI] generateTradeIdea failed for ${ctx.teamAbbr} (${ms}ms):`, err instanceof Error ? err.message : err);
+    if (err instanceof LLMAbortError) {
+      console.log(`[TradeAI] generateTradeIdea aborted for ${ctx.teamAbbr} (${ms}ms)`);
+    } else {
+      console.warn(`[TradeAI] generateTradeIdea failed for ${ctx.teamAbbr} (${ms}ms):`, err instanceof Error ? err.message : err);
+    }
     return null;
   }
 }
@@ -333,6 +363,8 @@ export async function decideOnClockTrade(
   profile: GMProfile,
   ctx: TradeAIContext,
   currentPick: { overall: number; round: number },
+  timeoutMs?: number,
+  signal?: AbortSignal,
 ): Promise<OnClockDecision | null> {
   // Low-aggression GMs usually just pick
   if (Math.random() > profile.tradeAggression + 0.2) return { action: 'pick' };
@@ -371,8 +403,15 @@ Return JSON: {"action":"pick"} or {"action":"trade","tradeIdea":{"partnerTeam":"
 
   const leakInfo = buildLeakContext(ctx.recentLeaks);
 
+  const boardNote = ctx.boardTopRanks?.length
+    ? `Your board's top available: ${ctx.boardTopRanks.slice(0, 5).map(r => {
+        const p = PROSPECT_BY_RANK.get(r);
+        return p ? `${p.name} (${p.pos})` : `#${r}`;
+      }).join(', ')}\n`
+    : '';
+
   const userMsg = `Your pick #${currentPick.overall} (value: ${currentValue})
-Your other picks: ${buildPickList(ctx.teamPicks.filter(p => p.overall !== currentPick.overall).map(p => p.overall), chart)}
+${boardNote}Your other picks: ${buildPickList(ctx.teamPicks.filter(p => p.overall !== currentPick.overall).map(p => p.overall), chart)}
 Already drafted: ${ctx.draftedByTeam.map(p => `${p.name} (${p.pos})`).join(', ') || 'none'}
 ${ctx.strategyPrompt ? `Strategy: ${ctx.strategyPrompt}` : ''}
 Top available: ${buildAvailableProspects(ctx.availableRanks, 10)}
@@ -381,7 +420,10 @@ Teams that might want to trade up:
 ${partnerSummary}${leakInfo}`;
 
   try {
-    const raw = await withTimeout(chatJSON<RawOnClockDecision>(system, userMsg));
+    const raw = await withAbortableTimeout(
+      (sig) => chatJSON<RawOnClockDecision>(system, userMsg, { signal: sig }),
+      timeoutMs ?? LLM_TIMEOUT_MS, signal,
+    );
     const action = raw.action?.toLowerCase();
     if (action !== 'pick' && action !== 'trade') return { action: 'pick' };
 
@@ -407,7 +449,11 @@ ${partnerSummary}${leakInfo}`;
     return { action: 'pick' };
   } catch (err) {
     const ms = Date.now() - start;
-    console.warn(`[TradeAI] decideOnClockTrade failed for ${ctx.teamAbbr} (${ms}ms):`, err instanceof Error ? err.message : err);
+    if (err instanceof LLMAbortError) {
+      console.log(`[TradeAI] decideOnClockTrade aborted for ${ctx.teamAbbr} (${ms}ms)`);
+    } else {
+      console.warn(`[TradeAI] decideOnClockTrade failed for ${ctx.teamAbbr} (${ms}ms):`, err instanceof Error ? err.message : err);
+    }
     return null;
   }
 }

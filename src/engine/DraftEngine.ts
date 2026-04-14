@@ -13,6 +13,9 @@ import { TEAMS } from '../data/teams';
 import { ROSTERS } from '../data/rosters';
 import { isOllamaConfigured } from '../llm/OllamaService';
 import { smartAutopick } from '../llm/SmartAutopick';
+import { GM_BOARDS } from '../data/gmBoards';
+import { gmResearch } from '../llm/BoardAIService';
+import { DEFAULT_STRATEGY_PROMPTS } from '../data/teamProfiles';
 
 export { formatCapAmount } from './TradeEngine';
 
@@ -48,7 +51,7 @@ export const DEFAULT_BOARD_DATA: BoardData = {
 export const DEFAULT_STATE: DraftState = {
   schemaVersion: 1,
   status: 'idle',
-  config: { channelId: null, timerSeconds: 60, autoPick: true, rounds: 7, allowPlayerTrades: true, tradeAnnouncement: 'insider', enforceSalaryCap: true, cpuTrading: true },
+  config: { channelId: null, timerSeconds: 60, autoPick: true, rounds: 7, allowPlayerTrades: true, tradeAnnouncement: 'insider', enforceSalaryCap: true, cpuTrading: true, simulationMode: false, gmExtraResearch: false },
   assignments: {},
   coManagers: {},
   schedule: [],
@@ -109,6 +112,7 @@ export class DraftEngine extends TypedEventEmitter<DraftEventMap> {
     this.aiGM = new AIGMService({
       getState: () => this.state,
       getBoardData: () => this.boardData,
+      getEffectiveBoard: (t) => this.getEffectiveBoard(t),
       getTradeManager: () => this.trades,
       emit: (k, p) => this.emit(k, p),
       persist: () => this.persist(),
@@ -474,8 +478,13 @@ export class DraftEngine extends TypedEventEmitter<DraftEventMap> {
 
   // ─── Custom Board / Strategy ──────────────────────────────────────────────
 
+  private getEffectiveBoard(teamAbbr: string): number[] {
+    return this.boardData.customBoards[teamAbbr] ?? GM_BOARDS[teamAbbr] ?? [];
+  }
+
   private async getBestPickForTeam(teamAbbr: string): Promise<number | undefined> {
     const available = new Set(this.state.availableRanks);
+    const board = this.getEffectiveBoard(teamAbbr);
 
     if (isOllamaConfigured()) {
       const slot = this.state.schedule[this.state.currentPickIndex];
@@ -486,18 +495,38 @@ export class DraftEngine extends TypedEventEmitter<DraftEventMap> {
       for (const p of draftedByTeam) {
         posCounts[p.pos] = (posCounts[p.pos] || 0) + 1;
       }
+
+      let researchContext: string | undefined;
+      if (this.state.config.gmExtraResearch && this.state.config.simulationMode && board.length > 0) {
+        try {
+          researchContext = await gmResearch({
+            teamAbbr,
+            teamName: TEAMS[teamAbbr]?.name ?? teamAbbr,
+            boardTopAvailable: board.filter(r => available.has(r)).slice(0, 8).map(r => {
+              const p = PROSPECT_BY_RANK.get(r);
+              return p ? { rank: r, name: p.name, pos: p.pos, school: p.school } : { rank: r, name: `#${r}`, pos: '?', school: '?' };
+            }),
+            pickInfo: { round: slot.round, roundPick: slot.roundPick, overall: slot.overall },
+            strategy: this.boardData.strategyPrompts[teamAbbr] ?? DEFAULT_STRATEGY_PROMPTS[teamAbbr] ?? '',
+            draftedByTeam,
+          }) || undefined;
+        } catch (err) {
+          console.warn(`[DraftEngine] GM research failed for ${teamAbbr}:`, err instanceof Error ? err.message : err);
+        }
+      }
+
       const smartRank = await smartAutopick(teamAbbr, this.boardData.strategyPrompts[teamAbbr], {
         availableRanks: this.state.availableRanks,
-        boardRanks: this.boardData.customBoards[teamAbbr] ?? [],
+        boardRanks: board,
         draftedByTeam,
         rosterPosCounts: posCounts,
         pickInfo: { round: slot.round, roundPick: slot.roundPick, overall: slot.overall },
-      });
+        researchContext,
+      }, this.state.config.simulationMode ? 0 : undefined);
       if (smartRank !== undefined && available.has(smartRank)) return smartRank;
     }
 
-    const board = this.boardData.customBoards[teamAbbr];
-    if (board?.length) {
+    if (board.length) {
       const pick = board.find(rank => available.has(rank));
       if (pick !== undefined) return pick;
     }
@@ -530,7 +559,7 @@ export class DraftEngine extends TypedEventEmitter<DraftEventMap> {
   }
 
   getCustomBoard(teamAbbr: string): number[] {
-    return this.boardData.customBoards[teamAbbr] ?? [];
+    return this.getEffectiveBoard(teamAbbr);
   }
 
   getStrategyPrompt(teamAbbr: string): string | undefined {
@@ -565,7 +594,7 @@ export class DraftEngine extends TypedEventEmitter<DraftEventMap> {
     totalPages: number;
     page: number;
   } {
-    const board = this.boardData.customBoards[teamAbbr] ?? [];
+    const board = this.getEffectiveBoard(teamAbbr);
     const available = this.state.availableRanks.length > 0
       ? new Set(this.state.availableRanks)
       : new Set(PROSPECTS_DEDUPED.map(p => p.rank));

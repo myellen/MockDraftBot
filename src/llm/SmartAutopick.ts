@@ -3,7 +3,7 @@
  * The board is the primary signal; the strategy guides deviations.
  */
 
-import { chatJSON } from './OllamaService';
+import { chatJSON, LLMAbortError } from './OllamaService';
 import { PROSPECT_BY_RANK } from '../data/prospects';
 import { DEFAULT_STRATEGY_PROMPTS } from '../data/teamProfiles';
 
@@ -13,6 +13,7 @@ interface AutopickContext {
   draftedByTeam: Array<{ name: string; pos: string }>;
   rosterPosCounts: Record<string, number>;
   pickInfo: { round: number; roundPick: number; overall: number };
+  researchContext?: string;  // pre-pick scouting analysis from board-ai pipeline
 }
 
 interface AutopickResponse {
@@ -80,6 +81,10 @@ function buildUserMessage(
     parts.push(`\nBPA (not on board): ${bpa.join(', ')}`);
   }
 
+  if (ctx.researchContext) {
+    parts.push(`\nPre-pick scouting research:\n${ctx.researchContext}`);
+  }
+
   return parts.join('\n');
 }
 
@@ -91,6 +96,8 @@ export async function smartAutopick(
   teamAbbr: string,
   strategy: string | undefined,
   ctx: AutopickContext,
+  timeoutMs?: number,
+  signal?: AbortSignal,
 ): Promise<number | undefined> {
   // Resolve strategy: user-set → default team profile → skip
   const strat = strategy ?? DEFAULT_STRATEGY_PROMPTS[teamAbbr];
@@ -98,14 +105,17 @@ export async function smartAutopick(
 
   const userMsg = buildUserMessage(teamAbbr, strat, ctx);
 
+  const controller = new AbortController();
+  const composed = signal
+    ? AbortSignal.any([controller.signal, signal])
+    : controller.signal;
+  const effectiveTimeout = timeoutMs ?? 5000;
+  const timer = effectiveTimeout > 0
+    ? setTimeout(() => controller.abort(), effectiveTimeout)
+    : null;
+
   try {
-    // 5-second timeout via Promise.race
-    const result = await Promise.race([
-      chatJSON<AutopickResponse>(SYSTEM_PROMPT, userMsg),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Autopick LLM timeout')), 5000)
-      ),
-    ]);
+    const result = await chatJSON<AutopickResponse>(SYSTEM_PROMPT, userMsg, { signal: composed });
 
     const pickedName = result.pick?.trim();
     if (!pickedName) return undefined;
@@ -135,7 +145,13 @@ export async function smartAutopick(
     console.warn(`[SmartAutopick] LLM picked "${pickedName}" but no match found in available prospects`);
     return undefined;
   } catch (err) {
-    console.warn(`[SmartAutopick] Failed for ${teamAbbr}:`, err instanceof Error ? err.message : err);
+    if (err instanceof LLMAbortError) {
+      console.log(`[SmartAutopick] Aborted for ${teamAbbr}`);
+    } else {
+      console.warn(`[SmartAutopick] Failed for ${teamAbbr}:`, err instanceof Error ? err.message : err);
+    }
     return undefined;
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }

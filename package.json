@@ -11,6 +11,7 @@
     "gen-rosters": "ts-node scripts/generate-rosters.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
     "discord.js": "^14.19.3",
     "dotenv": "^16.5.0",
     "express": "^5.2.1",

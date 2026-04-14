@@ -7,11 +7,17 @@ import * as path from 'path';
 import { DraftManager } from '../discord/DraftManager';
 import { TEAMS } from '../data/teams';
 import { ALL_POSITIONS } from '../data/prospects';
-import { isOllamaConfigured, chatJSON, chatJSONWithHistory } from '../llm/OllamaService';
+import { TEAM_DRAFT_INTEL, DRAFT_KNOWLEDGE_BLOCK } from '../data/boardSystemPrompt';
+import { isOllamaConfigured, chatJSONWithHistory } from '../llm/OllamaService';
 import { buildMyBoardEmbed } from '../utils/embeds';
+import { ConversationHistory, type ConversationEntry } from '../utils/conversationHistory';
 import { isAdmin } from '../utils/permissions';
-import { isAvailable as isBeastAvailable, lookupProspect, lookupProspectLight, lookupByPositionRank, searchByPosition, getTopProspects, getBeastRanking, queryProspects, ragSearch } from '../data/beastScouting';
-import type { ProspectQuery } from '../data/beastScouting';
+import { isAvailable as isBeastAvailable, getBeastRanking } from '../data/beastScouting';
+import {
+  type DataNeeds, EXTRACTION_SYSTEM,
+  extractDataNeeds as sharedExtractDataNeeds,
+  fetchScoutingData,
+} from '../llm/BoardAIService';
 
 const PROMPT_LOG_DIR = path.join(process.cwd(), 'logs', 'prompts');
 
@@ -69,27 +75,7 @@ interface BoardAIResponse {
 }
 
 // ── In-memory conversation history per user (resets on restart) ──
-interface ConversationEntry {
-  role: 'user' | 'assistant';
-  content: string;
-}
-const MAX_HISTORY = 10; // keep last 5 exchanges
-const conversations = new Map<string, ConversationEntry[]>();
-
-function getHistory(userId: string): ConversationEntry[] {
-  return conversations.get(userId) ?? [];
-}
-
-function addToHistory(userId: string, role: 'user' | 'assistant', content: string): void {
-  const history = conversations.get(userId) ?? [];
-  history.push({ role, content });
-  if (history.length > MAX_HISTORY) history.splice(0, history.length - MAX_HISTORY);
-  conversations.set(userId, history);
-}
-
-function clearHistory(userId: string): void {
-  conversations.delete(userId);
-}
+const conversations = new ConversationHistory(10); // keep last 5 exchanges
 
 /**
  * Build a full context snapshot for the LLM board agent.
@@ -154,6 +140,11 @@ ${boardStr}
 
 ## Current Draft Strategy
 ${strategyStr}
+${TEAM_DRAFT_INTEL[teamAbbr] ? `
+## ${teamAbbr} Draft Intelligence
+${TEAM_DRAFT_INTEL[teamAbbr]}
+` : ''}
+${DRAFT_KNOWLEDGE_BLOCK}
 
 ## Valid Positions
 ${positionsList}
@@ -243,109 +234,9 @@ Only include the fields relevant to the action:
 
 // ── LLM-powered scouting data extraction ──
 
-interface DataNeeds {
-  lookups: string[];                                  // prospect names to fetch full reports for
-  posRanks: Array<{ pos: string; rank: number }>;     // "EDGE 30" ��� specific position rank lookup
-  posLists: Array<{ pos: string; count: number }>;    // "top 30 EDGE" ��� list at position
-  board: boolean;                                     // include scouting data for board players
-  topN: number;                                       // >0 → include top N overall prospects
-  query?: ProspectQuery | null;                       // flexible filter/sort/limit query
-  ragQuery?: string | null;                           // qualitative scouting search ("high motor", "nose for the football")
-}
-
-const EXTRACTION_SYSTEM = `You extract NFL draft scouting data needs from a user query. Given the query, recent conversation context, and the user's board, determine what prospect data should be fetched from the scouting database.
-
-Return ONLY JSON:
-{
-  "lookups": [],    // prospect names to get full scouting reports for (max 15)
-  "posRanks": [],   // specific position rank lookups, e.g. [{"pos":"EDGE","rank":30}]
-  "posLists": [],   // position group lists, e.g. [{"pos":"EDGE","count":30}]
-  "board": false,   // true if query references "my board" or the user's draft strategy
-  "topN": 0,        // >0 if query asks about best available / BPA / top overall prospects
-  "query": null,    // structured query for filtering/sorting (see below), or null
-  "ragQuery": null  // qualitative/trait-based scouting search string, or null
-}
-
-Key rules:
-- "edge 30" / "EDGE30" / "the 30th edge" → posRanks: [{"pos":"EDGE","rank":30}] (specific prospect at that rank)
-- "top 30 edge rushers" / "list 30 EDGE" → posLists: [{"pos":"EDGE","count":30}]
-- "tell me about Cam Ward" → lookups: ["Cam Ward"]
-- "tell me about him" / "what are his weaknesses" → resolve the pronoun from conversation context, put the actual name in lookups
-- "compare X and Y" → lookups: ["X", "Y"]
-- "best available" / "BPA" → topN: 20
-- "draft for need" / "analyze my board" / "what should I draft" → board: true
-- Position abbreviations: QB, RB, WR, TE, OT, G, C, EDGE, DT, LB, CB, S
-- Default count for position lists is 10 unless user specifies
-- If query is a simple board instruction ("prioritize QBs", "clear my board") with no scouting question, return all empty/false/0/null
-
-Query object — for flexible filtering/sorting that the simple lookups above can't handle:
-{
-  "filters": [{"field": "...", "op": "...", "value": ...}],
-  "sort": {"field": "...", "order": "asc" | "desc"},
-  "limit": 20
-}
-
-Available fields:
-- Top-level: pos, posRank, name, school, grade, ovrRank, age, ht (→ inches), wt (→ pounds)
-- Combine: combine.forty, combine.vert (inches), combine.broad (inches), combine.shuttle, combine.cone, combine.bench, combine.hand (inches), combine.arm (inches), combine.wing (inches)
-- Stats (most recent year): stats.sacks, stats.tackles, stats.tackles_for_loss, stats.passing_td, stats.passing_yards, stats.interceptions, stats.receptions, stats.receiving_yards, stats.receiving_td, stats.rushing_yards, stats.rushing_td, stats.carries
-
-Operators: eq, neq, lt, gt, lte, gte, in, contains
-- Heights must be in inches: 6'4" = 76, 6'2" = 74, 5'11" = 71
-- Weights in pounds: 250, 200, etc.
-- "in" takes an array: {"field":"pos","op":"in","value":["EDGE","DT"]}
-- "contains" does substring match on strings/arrays (school, name, strengths, weaknesses)
-
-When to use query vs other fields:
-- "top 10 EDGEs" → posLists (simpler, more reliable)
-- "EDGEs sorted by forty time" → query (needs sorting by measurement)
-- "EDGEs under 250 lbs" → query (needs filtering by measurement)
-- "fastest CBs" / "who ran the fastest 40" → query (sort by combine.forty asc)
-- "tallest WRs" → query (sort by ht desc)
-- "QBs who threw 30+ TDs" → query (filter stats.passing_td gt 30)
-- "prospects from Ohio State" → query (filter school contains "Ohio State")
-- "tell me about Travis Hunter" → lookups (specific prospect, NOT query)
-
-Examples:
-- "EDGEs under 250 with sub-4.5 40s sorted by forty" →
-  query: {"filters":[{"field":"pos","op":"eq","value":"EDGE"},{"field":"wt","op":"lt","value":250},{"field":"combine.forty","op":"lt","value":4.5}],"sort":{"field":"combine.forty","order":"asc"},"limit":20}
-
-- "who are the fastest cornerbacks?" →
-  query: {"filters":[{"field":"pos","op":"eq","value":"CB"}],"sort":{"field":"combine.forty","order":"asc"},"limit":20}
-
-- "tallest WRs in the draft" →
-  query: {"filters":[{"field":"pos","op":"eq","value":"WR"}],"sort":{"field":"ht","order":"desc"},"limit":20}
-
-- "QBs with over 30 passing TDs last year" →
-  query: {"filters":[{"field":"pos","op":"eq","value":"QB"},{"field":"stats.passing_td","op":"gt","value":30}],"sort":{"field":"stats.passing_td","order":"desc"},"limit":20}
-
-- "prospects from Ohio State sorted by overall rank" →
-  query: {"filters":[{"field":"school","op":"contains","value":"Ohio State"}],"sort":{"field":"ovrRank","order":"asc"},"limit":30}
-
-ragQuery — for qualitative/trait-based scouting searches:
-- Use ragQuery when the user asks about player traits, skills, or scouting language that can't be expressed as numeric filters.
-- "high motor" → ragQuery: "high motor"
-- "good hands and route running" → ragQuery: "good hands route running"
-- "explosive first step" → ragQuery: "explosive first step"
-- "nose for the football" → ragQuery: "nose for the football"
-- "guys who can cover" → ragQuery: "coverage skills man zone"
-- ragQuery can coexist with other fields: "fast EDGEs with a high motor" → query (pos=EDGE, sort forty asc) + ragQuery ("high motor")
-- Do NOT use ragQuery for measurable/numeric queries — those should use the query object
-- Do NOT use ragQuery for specific player lookups — those should use lookups
-
-Follow-up handling (CRITICAL):
-- "what were their 40 times?" / "rank them by..." / "same but..." → look at conversation history to determine WHAT GROUP was discussed. If previous exchange was about "top 30 EDGE", re-fetch posLists: [{"pos":"EDGE","count":30}] with the SAME count. If the follow-up adds a filter or sort on top (e.g. "rank those by 40 time"), use a query instead.
-- "same" / "same thing" / "do that again" → repeat the same data needs as implied by the previous exchange
-- When the previous exchange discussed a position group, ALWAYS re-fetch that group via posLists — do NOT try to list individual names in lookups (the measurements data comes from the position list, not individual lookups)`;
-
-/**
- * Use a fast LLM call to determine what scouting data the main call needs.
- * Falls back to empty data on failure (main LLM can still answer from its context).
- */
 interface ExtractionResult {
   needs: DataNeeds;
-  extractionPrompt: string;  // the user message sent to extraction LLM
-  extractionRaw: object;     // raw LLM response before sanitization
+  extractionPrompt: string;
 }
 
 async function extractDataNeeds(
@@ -353,161 +244,9 @@ async function extractDataNeeds(
   userId: string,
   boardNames: string[],
 ): Promise<ExtractionResult> {
-  const fallback: DataNeeds = { lookups: [], posRanks: [], posLists: [], board: false, topN: 0 };
-
-  try {
-    // Build conversation context so extraction can resolve follow-ups
-    const history = getHistory(userId);
-    let contextBlock = '';
-    if (history.length > 0) {
-      // Include last 2 exchanges (user + assistant) so extraction sees the full thread
-      const recent = history.slice(-4); // up to 2 user + 2 assistant entries
-      const parts: string[] = [];
-      for (const h of recent) {
-        const label = h.role === 'user' ? 'User' : 'AI';
-        // Generous truncation — extraction prompt is small, room for context
-        parts.push(`${label}: ${h.content.slice(0, 1500)}`);
-      }
-      contextBlock = `\nConversation history:\n${parts.join('\n')}`;
-    }
-    const boardBlock = boardNames.length > 0
-      ? `\nUser's board players: ${boardNames.slice(0, 20).join(', ')}`
-      : '';
-
-    const userMsg = `Query: ${description}${contextBlock}${boardBlock}`;
-    console.log(`[board-ai] Extraction call: ${userMsg.length} chars`);
-
-    const result = await chatJSON<DataNeeds>(EXTRACTION_SYSTEM, userMsg);
-    console.log(`[board-ai] Extraction result: ${JSON.stringify(result)}`);
-
-    return {
-      needs: {
-        lookups: Array.isArray(result.lookups) ? result.lookups.slice(0, 15) : [],
-        posRanks: Array.isArray(result.posRanks) ? result.posRanks.slice(0, 5) : [],
-        posLists: Array.isArray(result.posLists) ? result.posLists.slice(0, 3) : [],
-        board: !!result.board,
-        topN: typeof result.topN === 'number' ? Math.min(result.topN, 30) : 0,
-        query: result.query && Array.isArray(result.query.filters) ? result.query : null,
-        ragQuery: typeof result.ragQuery === 'string' && result.ragQuery.trim() ? result.ragQuery.trim() : null,
-      },
-      extractionPrompt: userMsg,
-      extractionRaw: result,
-    };
-  } catch (err) {
-    console.warn('[board-ai] Extraction call failed, proceeding without pre-fetch:', err instanceof Error ? err.message : err);
-    return { needs: fallback, extractionPrompt: '', extractionRaw: {} };
-  }
-}
-
-/**
- * Fetch scouting data based on LLM-extracted data needs.
- */
-async function fetchScoutingData(needs: DataNeeds, boardNames: string[]): Promise<string> {
-  const sections: string[] = [];
-
-  // 1. Named prospect lookups
-  for (const name of needs.lookups) {
-    const data = lookupProspect(name);
-    if (!data.includes('"error"')) {
-      sections.push(`### Scouting Report: ${name}\n${data}`);
-    }
-  }
-
-  // 2. Position rank lookups (e.g. "EDGE 30" → the specific prospect)
-  for (const { pos, rank } of needs.posRanks) {
-    const data = lookupByPositionRank(pos, rank);
-    if (!data.includes('"error"')) {
-      sections.push(`### ${pos} #${rank} Scouting Report\n${data}`);
-    }
-  }
-
-  // 3. Position group lists (e.g. "top 30 EDGE")
-  for (const { pos, count } of needs.posLists) {
-    const data = searchByPosition(pos, Math.min(count, 30));
-    if (!data.includes('"error"')) {
-      sections.push(`### Top ${count} ${pos} Prospects (Beast Rankings)\n${data}`);
-    }
-  }
-
-  // 4. Board player lookups — use light version (measurements + stats, no writeup text)
-  //    to fit all board players within token budget. Include board rank for ordering.
-  if (needs.board && boardNames.length > 0) {
-    const alreadyFetched = new Set(needs.lookups.map(n => n.toLowerCase()));
-    const boardData: string[] = [];
-    for (let i = 0; i < boardNames.length; i++) {
-      const name = boardNames[i];
-      if (alreadyFetched.has(name.toLowerCase())) continue;
-      const data = lookupProspectLight(name);
-      if (!data.includes('"error"')) {
-        // Inject board rank so LLM knows the ordering
-        const parsed = JSON.parse(data);
-        parsed.boardRank = i + 1;
-        boardData.push(JSON.stringify(parsed));
-      }
-    }
-    if (boardData.length > 0) {
-      sections.push(`### Board Players (${boardData.length}) — ordered by board rank\n[${boardData.join(',')}]`);
-    }
-  }
-
-  // 5. Structured query
-  if (needs.query) {
-    const data = queryProspects(needs.query);
-    if (!data.includes('"error"')) {
-      const filterDesc = needs.query.filters.map(f => `${f.field} ${f.op} ${f.value}`).join(', ');
-      const sortDesc = needs.query.sort ? ` sorted by ${needs.query.sort.field} ${needs.query.sort.order}` : '';
-      sections.push(`### Query Results (${filterDesc}${sortDesc})\n${data}`);
-    }
-  }
-
-  // 6. RAG scouting search (qualitative traits)
-  //    Also fetch full measurements for RAG matches so the LLM can cross-reference
-  //    (e.g. "receivers good at beating press" → RAG finds names → measurements for those names)
-  //    When a structured query has a position filter, apply it to RAG too so results are position-scoped
-  if (needs.ragQuery) {
-    const posFilter = needs.query?.filters.find(f => f.field === 'pos' && f.op === 'eq')?.value as string | undefined;
-    const data = await ragSearch(needs.ragQuery, 15, posFilter);
-    const parsed = JSON.parse(data);
-    if (parsed.results?.length > 0) {
-      sections.push(`### Scouting Trait Search: "${needs.ragQuery}"\n${data}`);
-
-      const alreadyFetched = new Set(needs.lookups.map(n => n.toLowerCase()));
-      const ragDetails: string[] = [];
-      for (const r of parsed.results as Array<{ name: string }>) {
-        if (alreadyFetched.has(r.name.toLowerCase())) continue;
-        alreadyFetched.add(r.name.toLowerCase());
-        const detail = lookupProspectLight(r.name);
-        if (!detail.includes('"error"')) {
-          const p = JSON.parse(detail);
-          // Format key fields prominently so the LLM doesn't miss them
-          const lastStats = p.stats?.length ? p.stats[p.stats.length - 1] : null;
-          const statsLine = lastStats
-            ? `Latest stats (${lastStats.year}): ${Object.entries(lastStats).filter(([k]) => k !== 'year' && k !== 'notes').map(([k, v]) => `${k}=${v}`).join(', ')}`
-            : 'No stats available';
-          ragDetails.push(
-            `**${p.name}** | ${p.pos}${p.posRank} | ${p.school} | Grade: ${p.grade || '—'} | OVR: ${p.ovrRank ?? '—'}\n` +
-            `  Ht: ${p.ht || '—'}, Wt: ${p.wt || '—'}` +
-            (p.combine ? ` | 40: ${p.combine.forty ?? '—'}, Vert: ${p.combine.vert ?? '—'}, Broad: ${p.combine.broad ?? '—'}, Shuttle: ${p.combine.shuttle ?? '—'}, 3Cone: ${p.combine.cone ?? '—'}, Bench: ${p.combine.bench ?? '—'}, Arm: ${p.combine.arm ?? '—'}, Hand: ${p.combine.hand ?? '—'}` : '') +
-            `\n  ${statsLine}`
-          );
-        }
-      }
-      if (ragDetails.length > 0) {
-        sections.push(`### Trait Match Profiles (${ragDetails.length})\n${ragDetails.join('\n\n')}`);
-      }
-    }
-  }
-
-  // 7. Top overall prospects
-  if (needs.topN > 0) {
-    const data = getTopProspects(needs.topN);
-    sections.push(`### Overall Top ${needs.topN} Prospects (Beast Rankings)\n${data}`);
-  }
-
-  if (sections.length === 0) return '';
-
-  return '\n\n---\n## Scouting Data (from Dane Brugler\'s "The Beast" 2026 NFL Draft Guide)\n\n' +
-    sections.join('\n\n');
+  const history = conversations.get(userId);
+  const needs = await sharedExtractDataNeeds(description, history, boardNames);
+  return { needs, extractionPrompt: description };
 }
 
 /** Call the LLM and handle truncated JSON recovery. */
@@ -650,7 +389,7 @@ export async function execute(
     console.log(`[board-ai] Prompt length: ${systemPrompt.length} chars, ~${Math.ceil(systemPrompt.length / 4)} tokens`);
 
     // ── Main LLM call ──
-    const history = getHistory(interaction.user.id);
+    const history = conversations.get(interaction.user.id);
     const result = await callLLM(systemPrompt, history, enrichedMessage);
 
     // Strip position/school annotations the model sometimes adds (e.g. "Name (QB)" → "Name")
@@ -684,7 +423,7 @@ export async function execute(
       '',
       '### Extraction Result',
       '```json',
-      extraction ? JSON.stringify(extraction.extractionRaw, null, 2) : '{}',
+      extraction ? JSON.stringify(extraction.needs, null, 2) : '{}',
       '```',
       '',
       '---',
@@ -726,8 +465,8 @@ export async function execute(
       const answer = result.answer ?? result.explanation ?? 'No answer provided.';
 
       // Save to history for follow-up
-      addToHistory(interaction.user.id, 'user', userMessage);
-      addToHistory(interaction.user.id, 'assistant', JSON.stringify(result));
+      conversations.add(interaction.user.id, 'user', userMessage);
+      conversations.add(interaction.user.id, 'assistant', JSON.stringify(result));
 
       // Split into 2000-char chunks, breaking at newlines and keeping code fences balanced
       const chunks: string[] = [];
@@ -783,7 +522,7 @@ export async function execute(
       const strategy = manager.getStrategyPrompt(userTeam);
       const embed = buildMyBoardEmbed(teamName, entries, page, totalPages, total, strategy, isBeastAvailable() ? getBeastRanking : undefined);
 
-      clearHistory(interaction.user.id);
+      conversations.clear(interaction.user.id);
       await interaction.editReply({ content: reply, embeds: [embed] });
       return;
     }
@@ -798,8 +537,8 @@ export async function execute(
       manager.setStrategyPrompt(userTeam, prompt);
 
       // Keep history so user can refine the strategy in follow-ups
-      addToHistory(interaction.user.id, 'user', description);
-      addToHistory(interaction.user.id, 'assistant', JSON.stringify(result));
+      conversations.add(interaction.user.id, 'user', description);
+      conversations.add(interaction.user.id, 'assistant', JSON.stringify(result));
 
       await interaction.editReply(
         `✅ **Draft Strategy Set for ${teamName}**\n` +
@@ -815,7 +554,7 @@ export async function execute(
       manager.clearBoard(userTeam, what);
       const label = what === 'board' ? 'custom board' : what === 'strategy' ? 'strategy prompt' : 'custom board and strategy';
 
-      clearHistory(interaction.user.id);
+      conversations.clear(interaction.user.id);
       await interaction.editReply(
         `✅ **Cleared ${label} for ${teamName}**\n` +
         `> ${result.explanation}\n\n` +
@@ -845,8 +584,8 @@ export async function execute(
       const rawText = message.replace('Invalid JSON from LLM: ', '').trim();
       if (rawText.length > 20 && !rawText.startsWith('{')) {
         console.warn('[board-ai] Recovering raw text answer from failed JSON parse');
-        addToHistory(interaction.user.id, 'user', description);
-        addToHistory(interaction.user.id, 'assistant', rawText);
+        conversations.add(interaction.user.id, 'user', description);
+        conversations.add(interaction.user.id, 'assistant', rawText);
         const chunks: string[] = [];
         let remaining = rawText;
         while (remaining.length > 0) {

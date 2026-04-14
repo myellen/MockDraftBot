@@ -78,6 +78,8 @@ export class WebAdapter implements PersistenceProvider, TimerProvider {
           tradeAnnouncement: (parsed.config as DraftConfig).tradeAnnouncement ?? 'intrigue',
           enforceSalaryCap: (parsed.config as DraftConfig).enforceSalaryCap ?? false,
           cpuTrading: (parsed.config as DraftConfig).cpuTrading ?? false,
+          simulationMode: (parsed.config as DraftConfig).simulationMode ?? false,
+          gmExtraResearch: (parsed.config as DraftConfig).gmExtraResearch ?? false,
         },
       };
       state.pendingTrades = state.pendingTrades.map(t => {
@@ -159,9 +161,15 @@ export class WebAdapter implements PersistenceProvider, TimerProvider {
     return this.sockets.size;
   }
 
-  /** Broadcast current state to all connected clients */
+  /** Broadcast current state to all connected clients (debounced per microtask) */
+  private stateBroadcastPending = false;
   broadcastState(): void {
-    this.broadcast('state:snapshot', this.engine.getState());
+    if (this.stateBroadcastPending) return;
+    this.stateBroadcastPending = true;
+    queueMicrotask(() => {
+      this.stateBroadcastPending = false;
+      this.broadcast('state:snapshot', this.engine.getState());
+    });
   }
 
   private broadcast(event: string, data: unknown): void {
@@ -200,39 +208,59 @@ export class WebAdapter implements PersistenceProvider, TimerProvider {
   private bindEvents(): void {
     this.engine.on('pick:made', (d) => {
       this.broadcast('pick:made', d);
+      this.broadcastState();
       this.addFeedItem('pick-made', d.pick);
-      // Queue insider tweet for every pick
       this.insiderQueue.enqueue(this.engine, false);
     });
-    this.engine.on('pick:clock', (d) => this.broadcast('pick:clock', d));
-    this.engine.on('draft:started', (d) => this.broadcast('draft:started', d));
-    this.engine.on('draft:paused', (d) => this.broadcast('draft:paused', d));
-    this.engine.on('draft:resumed', (d) => this.broadcast('draft:resumed', d));
+    this.engine.on('pick:clock', (d) => {
+      this.broadcast('pick:clock', d);
+      this.broadcastState();
+    });
+    this.engine.on('draft:started', (d) => {
+      this.broadcast('draft:started', d);
+      this.broadcastState();
+    });
+    this.engine.on('draft:paused', (d) => {
+      this.broadcast('draft:paused', d);
+      this.broadcastState();
+    });
+    this.engine.on('draft:resumed', (d) => {
+      this.broadcast('draft:resumed', d);
+      this.broadcastState();
+    });
     this.engine.on('draft:reset', (d) => {
       this.broadcast('draft:reset', d);
-      // Clear feed on reset — engine.persist() will save it
       (this.engine.getState() as DraftState).feedItems = [];
+      this.broadcastState();
     });
     this.engine.on('draft:complete', (d) => {
       this.broadcast('draft:complete', d);
+      this.broadcastState();
       this.insiderQueue.stop();
     });
     this.engine.on('trade:executed', (d) => {
       this.broadcast('trade:executed', d);
+      this.broadcastState();
       this.addFeedItem('trade-executed', d.trade);
-      // Trades get priority in the insider queue
       this.insiderQueue.enqueue(this.engine, true);
     });
     this.engine.on('trade:cancelled', (d) => {
       this.broadcast('trade:cancelled', d);
+      this.broadcastState();
       this.addFeedItem('trade-cancelled', d);
     });
     this.engine.on('trade:chatter', (d) => {
       this.broadcast('trade:chatter', d);
       this.addFeedItem('trade-chatter', d);
     });
-    this.engine.on('cpu-offer:sent', (d) => this.broadcast('cpu-offer:sent', d));
-    this.engine.on('cpu-offer:resolved', (d) => this.broadcast('cpu-offer:resolved', d));
+    this.engine.on('cpu-offer:sent', (d) => {
+      this.broadcast('cpu-offer:sent', d);
+      this.broadcastState();
+    });
+    this.engine.on('cpu-offer:resolved', (d) => {
+      this.broadcast('cpu-offer:resolved', d);
+      this.broadcastState();
+    });
     this.engine.on('insider:tweet', (d) => {
       this.broadcast('insider:tweet', d);
       this.addFeedItem('insider-tweet', d);

@@ -84,6 +84,8 @@ export class DraftManager implements PersistenceProvider, TimerProvider {
           tradeAnnouncement: (parsed.config as DraftConfig).tradeAnnouncement ?? 'intrigue',
           enforceSalaryCap: (parsed.config as DraftConfig).enforceSalaryCap ?? false,
           cpuTrading: (parsed.config as DraftConfig).cpuTrading ?? false,
+          simulationMode: (parsed.config as DraftConfig).simulationMode ?? false,
+          gmExtraResearch: (parsed.config as DraftConfig).gmExtraResearch ?? false,
         },
       };
       // Backfill arrays on existing trades

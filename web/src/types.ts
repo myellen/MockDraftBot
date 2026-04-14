@@ -12,6 +12,8 @@ export interface DraftConfig {
   tradeAnnouncement: TradeAnnouncement;
   enforceSalaryCap: boolean;
   cpuTrading: boolean;
+  simulationMode: boolean;
+  gmExtraResearch: boolean;
 }
 
 export interface PickSlot {

@@ -5,7 +5,7 @@
  */
 
 import { TEAMS } from '../data/teams';
-import { isOllamaConfigured, chatJSON, chatText } from './OllamaService';
+import { isOllamaConfigured, chatJSON, chatText, LLMAbortError } from './OllamaService';
 import type { DraftEngine } from '../engine/DraftEngine';
 import { INSIDERS, buildLeakerPrompt, buildReporterPrompt } from './insiderData';
 
@@ -31,15 +31,13 @@ interface LeakerResponse {
   nuggets: LeakerNugget[];
 }
 
-/**
- * Generate a single insider tweet using the full leaker → reporter pipeline.
- * Works with DraftEngine directly — no Discord dependency.
- */
-export async function generateInsiderTweet(engine: DraftEngine): Promise<InsiderTweet> {
-  if (!isOllamaConfigured()) {
-    throw new Error('Ollama not configured');
-  }
+interface DraftContext {
+  leakerPrompt: string;
+  recentPicks: Array<{ team: string; prospectName: string; pos: string; school: string; round: number; overall: number }>;
+  teamNames: Record<string, string>;
+}
 
+function gatherDraftContext(engine: DraftEngine): DraftContext {
   const state = engine.getState();
   const teamNames: Record<string, string> = {};
   for (const [abbr, team] of Object.entries(TEAMS)) {
@@ -98,15 +96,41 @@ export async function generateInsiderTweet(engine: DraftEngine): Promise<Insider
   const slot = engine.getCurrentSlot();
   const currentPick = slot ? { overall: slot.overall, round: slot.round, team: slot.currentTeam } : null;
 
-  // Step 1: Leaker extracts nuggets
   const leakerPrompt = buildLeakerPrompt(
     recentTrades, cancelledTrades, pendingTrades,
     recentPicks, strategyNotes, currentPick, teamNames,
   );
 
-  const leakerResult = await chatJSON<LeakerResponse>(leakerPrompt, 'Analyze the draft activity and extract the most interesting nuggets.', 1.2);
+  return { leakerPrompt, recentPicks, teamNames };
+}
 
-  // Step 2: Pick insider + spiciest nugget → reporter writes tweet
+/**
+ * Generate a single insider tweet using the full leaker → reporter pipeline.
+ * Works with DraftEngine directly — no Discord dependency.
+ *
+ * The leaker prompt is built lazily (thunk) so that state is read at slot
+ * acquisition time, not enqueue time — avoids stale data when queued.
+ */
+export async function generateInsiderTweet(engine: DraftEngine, signal?: AbortSignal): Promise<InsiderTweet> {
+  if (!isOllamaConfigured()) {
+    throw new Error('Ollama not configured');
+  }
+
+  // Leaker thunk defers state read to slot acquisition time
+  let lastCtx: DraftContext | null = null;
+
+  const leakerResult = await chatJSON<LeakerResponse>(
+    () => {
+      lastCtx = gatherDraftContext(engine);
+      return lastCtx.leakerPrompt;
+    },
+    'Analyze the draft activity and extract the most interesting nuggets.',
+    { temperature: 1.2, signal },
+  );
+
+  const ctx = lastCtx ?? gatherDraftContext(engine);
+
+  // Pick insider + spiciest nugget → reporter writes tweet
   const insider = INSIDERS[Math.floor(Math.random() * INSIDERS.length)];
   const reporterPrompt = buildReporterPrompt(insider);
 
@@ -118,13 +142,13 @@ export async function generateInsiderTweet(engine: DraftEngine): Promise<Insider
     const chosen = topTier[Math.floor(Math.random() * topTier.length)];
     reporterInput = `Write a tweet based on this intel: ${chosen.nugget}`;
   } else {
-    const fallbackContext = recentPicks.length > 0
-      ? `A recent pick: the ${teamNames[recentPicks[0].team]} selected ${recentPicks[0].prospectName} (${recentPicks[0].pos}, ${recentPicks[0].school}) in round ${recentPicks[0].round}. The front office loved this player and had a much higher grade on him than where he was taken.`
+    const fallbackContext = ctx.recentPicks.length > 0
+      ? `A recent pick: the ${ctx.teamNames[ctx.recentPicks[0].team]} selected ${ctx.recentPicks[0].prospectName} (${ctx.recentPicks[0].pos}, ${ctx.recentPicks[0].school}) in round ${ctx.recentPicks[0].round}. The front office loved this player and had a much higher grade on him than where he was taken.`
       : 'Pre-draft buzz: teams are actively working the phones and evaluating prospects. Generate a vague but exciting rumor about draft day preparations.';
     reporterInput = `Write a tweet based on this intel: ${fallbackContext}`;
   }
 
-  let tweet = await chatText(reporterPrompt, reporterInput, 1.2);
+  let tweet = await chatText(reporterPrompt, reporterInput, { temperature: 1.2, signal });
   tweet = tweet.replace(/^["'\u201C\u201D\u2018\u2019]|["'\u201C\u201D\u2018\u2019]$/g, '').trim();
   if (tweet.length > 280) tweet = tweet.slice(0, 277) + '...';
 
@@ -140,6 +164,7 @@ export async function generateInsiderTweet(engine: DraftEngine): Promise<Insider
 
 const QUEUE_MIN_GAP_MS = 5000;
 const QUEUE_MAX_DEPTH = 10;
+const INSIDER_TIMEOUT_MS = 20_000;
 
 export class InsiderQueue {
   private queue: Array<{ engine: DraftEngine; priority: boolean }> = [];
@@ -189,12 +214,20 @@ export class InsiderQueue {
 
     while (this.queue.length > 0 && !this.stopped) {
       const item = this.queue.shift()!;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), INSIDER_TIMEOUT_MS);
       try {
-        const result = await generateInsiderTweet(item.engine);
+        const result = await generateInsiderTweet(item.engine, controller.signal);
         item.engine.emit('insider:tweet', result);
         console.log(`[InsiderQueue] Tweet by ${result.name}: ${result.tweet.slice(0, 80)}...`);
       } catch (err) {
-        console.error('[InsiderQueue] Failed to generate tweet:', err instanceof Error ? err.message : err);
+        if (err instanceof LLMAbortError) {
+          console.warn('[InsiderQueue] Tweet generation aborted (timeout)');
+        } else {
+          console.error('[InsiderQueue] Failed to generate tweet:', err instanceof Error ? err.message : err);
+        }
+      } finally {
+        clearTimeout(timer);
       }
 
       // Minimum gap between tweets

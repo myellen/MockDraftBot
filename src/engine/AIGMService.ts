@@ -19,6 +19,7 @@ import type { DraftState, PendingTrade, PickSlot, FuturePickRight, TradeLogEntry
 import type { DraftEventMap } from './events';
 import type { TradeEngine } from './TradeEngine';
 import { getGMProfile, type GMProfile, type GMArchetype } from '../data/gmProfiles';
+import { GM_RELATIONSHIPS, TRADE_DIRECTION, areDivisionalRivals } from '../data/gmRelationships';
 import { TEAMS } from '../data/teams';
 import { DEFAULT_STRATEGY_PROMPTS } from '../data/teamProfiles';
 import { isTradeReasonable, getPickValue } from './tradeValue';
@@ -64,6 +65,7 @@ export interface CPUOffer {
 interface AIGMHost {
   getState(): Readonly<DraftState>;
   getBoardData(): { strategyPrompts: Record<string, string> };
+  getEffectiveBoard(teamAbbr: string): number[];
   getTradeManager(): TradeEngine;
   emit<K extends keyof DraftEventMap>(event: K, data: DraftEventMap[K]): void;
   persist(): Promise<void>;
@@ -213,7 +215,10 @@ export class AIGMService {
     durationMs: number,
     isBackground: boolean,
   ): Promise<boolean> {
-    const deadline = Date.now() + durationMs;
+    const simMode = this.host.getState().config.simulationMode;
+    const deadline = simMode ? Number.MAX_SAFE_INTEGER : Date.now() + durationMs;
+    const llmTimeout = simMode ? 0 : undefined;
+    const maxCandidates = simMode ? 32 : MAX_CANDIDATES;
     const signal = this.deliberationAbort?.signal;
     let tradeExecuted = false;
 
@@ -235,7 +240,7 @@ export class AIGMService {
         .map(t => ({ team: t, score: this.scoreGMForTrade(t, onClockTeam, pickOverall, state, activeLeaks) }))
         .filter(c => c.score > HEURISTIC_THRESHOLD)
         .sort((a, b) => b.score - a.score)
-        .slice(0, MAX_CANDIDATES);
+        .slice(0, maxCandidates);
 
       // Log heuristic results
       const heuristicStr = scored.map(c => `${c.team}(${c.score})`).join(' ');
@@ -251,7 +256,7 @@ export class AIGMService {
         const ctx = this.buildContext(candidate.team, state);
 
         // 1 LLM call: generate trade idea
-        const idea = await generateTradeIdea(profile, ctx);
+        const idea = await generateTradeIdea(profile, ctx, llmTimeout, signal);
         const genMs = Date.now() - start;
 
         if (!idea) {
@@ -326,7 +331,7 @@ export class AIGMService {
           requestedFuturePicks: idea.requestedFuturePicks,
           offeredPlayers: idea.offeredPlayers,
           requestedPlayers: idea.requestedPlayers,
-        });
+        }, false, llmTimeout, signal);
         const evalMs = Date.now() - evalStart;
 
         if (!evaluation) {
@@ -360,7 +365,7 @@ export class AIGMService {
 
         if (evaluation.decision === 'counter' && evaluation.counterOffer && Date.now() < deadline && !signal?.aborted) {
           this.emitChatter(candidate.team, idea.partnerTeam, 'counter', evaluation.reasoning);
-          const counterResult = await this.handleCPUCounter(candidate.team, idea.partnerTeam, evaluation, state);
+          const counterResult = await this.handleCPUCounter(candidate.team, idea.partnerTeam, evaluation, state, llmTimeout, signal);
           if (counterResult) {
             tradeExecuted = true;
             break;
@@ -374,7 +379,7 @@ export class AIGMService {
       }
 
       // If we processed all candidates but time remains, breathe before next wave
-      if (Date.now() < deadline && !tradeExecuted && !signal?.aborted) {
+      if (Date.now() < deadline && !tradeExecuted && !signal?.aborted && !simMode) {
         await delay(BREATHE_MS);
       }
       if (tradeExecuted) break;
@@ -392,7 +397,7 @@ export class AIGMService {
           const decision = await decideOnClockTrade(onClockProfile, onClockCtx, {
             overall: currentSlot.overall,
             round: currentSlot.round,
-          });
+          }, llmTimeout, signal);
           const ms = Date.now() - start;
 
           console.log(`[AIGM] Pick #${currentSlot.overall} | ${currentSlot.currentTeam} on-clock | ${(ms / 1000).toFixed(1)}s | ${decision?.action ?? 'pick'}`);
@@ -402,7 +407,7 @@ export class AIGMService {
           if (decision?.action === 'trade' && decision.tradeIdea) {
             decision.tradeIdea.offeredFuturePicks = this.resolveFuturePicks(decision.tradeIdea.offeredFuturePicks, currentSlot.currentTeam, state);
             decision.tradeIdea.requestedFuturePicks = this.resolveFuturePicks(decision.tradeIdea.requestedFuturePicks, decision.tradeIdea.partnerTeam, state);
-            const executed = await this.attemptCPUToCPUTrade(currentSlot.currentTeam, decision.tradeIdea, state);
+            const executed = await this.attemptCPUToCPUTrade(currentSlot.currentTeam, decision.tradeIdea, state, llmTimeout, signal);
             if (executed) return true;
           }
         }
@@ -453,7 +458,20 @@ export class AIGMService {
       }
     }
 
-    // 7. Random jitter (0-5)
+    // 7. GM relationship bonus (0-10 pts)
+    const relKey = [teamAbbr, onClockTeam].sort().join('-');
+    score += GM_RELATIONSHIPS[relKey] ?? 0;
+
+    // 8. Trade direction compatibility (0-15 pts)
+    const proposerDir = TRADE_DIRECTION[teamAbbr] ?? 0;
+    const onClockDir = TRADE_DIRECTION[onClockTeam] ?? 0;
+    if (proposerDir > 0 && onClockDir < 0) score += Math.min(proposerDir + Math.abs(onClockDir), 15);
+    if (proposerDir < 0 && onClockDir > 0) score += Math.min(Math.abs(proposerDir) + onClockDir, 15);
+
+    // 9. Divisional rivalry penalty (-8 pts)
+    if (areDivisionalRivals(teamAbbr, onClockTeam)) score -= 8;
+
+    // 10. Random jitter (0-5)
     score += Math.random() * 5;
 
     // Skip human-controlled teams for CPU↔CPU deliberation
@@ -674,6 +692,8 @@ export class AIGMService {
     proposerTeam: string,
     idea: TradeIdea,
     state: Readonly<DraftState>,
+    timeoutMs?: number,
+    signal?: AbortSignal,
   ): Promise<boolean> {
     if (state.assignments[idea.partnerTeam]) return false; // partner is human
 
@@ -713,7 +733,7 @@ export class AIGMService {
       requestedFuturePicks: idea.requestedFuturePicks,
       offeredPlayers: idea.offeredPlayers,
       requestedPlayers: idea.requestedPlayers,
-    });
+    }, false, timeoutMs, signal);
 
     if (!evaluation) return false;
 
@@ -732,7 +752,7 @@ export class AIGMService {
 
     if (evaluation.decision === 'counter' && evaluation.counterOffer) {
       this.emitChatter(proposerTeam, idea.partnerTeam, 'counter', evaluation.reasoning);
-      return this.handleCPUCounter(proposerTeam, idea.partnerTeam, evaluation, state);
+      return this.handleCPUCounter(proposerTeam, idea.partnerTeam, evaluation, state, timeoutMs, signal);
     }
 
     this.emitChatter(proposerTeam, idea.partnerTeam, 'declined', evaluation.reasoning);
@@ -745,6 +765,8 @@ export class AIGMService {
     counterTeam: string,
     evaluation: TradeEvaluation,
     state: Readonly<DraftState>,
+    timeoutMs?: number,
+    signal?: AbortSignal,
   ): Promise<boolean> {
     if (!evaluation.counterOffer) return false;
     const counter = evaluation.counterOffer;
@@ -795,7 +817,7 @@ export class AIGMService {
       requestedFuturePicks: counter.requestedFuturePicks,
       offeredPlayers: counter.offeredPlayers ?? [],
       requestedPlayers: counter.requestedPlayers ?? [],
-    });
+    }, false, timeoutMs, signal);
 
     if (response?.decision === 'accept') {
       const trade: PendingTrade = {
@@ -836,6 +858,7 @@ export class AIGMService {
     const state = this.host.getState();
     const profile = getGMProfile(trade.receiverTeam);
     const ctx = this.buildContext(trade.receiverTeam, state);
+    const timeoutMs = state.config.simulationMode ? 0 : undefined;
 
     const proposal = {
       fromTeam: trade.proposerTeam,
@@ -847,11 +870,11 @@ export class AIGMService {
       requestedPlayers: trade.requestedPlayers,
     };
 
-    const result = await evaluateIncomingTrade(profile, ctx, proposal, true);
+    const result = await evaluateIncomingTrade(profile, ctx, proposal, true, timeoutMs);
     if (result) return result;
 
     console.warn(`[AIGM] First evaluateHumanProposal attempt failed for ${trade.receiverTeam}, retrying...`);
-    return evaluateIncomingTrade(profile, ctx, proposal, true);
+    return evaluateIncomingTrade(profile, ctx, proposal, true, timeoutMs);
   }
 
   // ── Trade chatter ─────────────────────────────────────────────────────
@@ -975,6 +998,10 @@ export class AIGMService {
     const strategyPrompt = this.host.getBoardData().strategyPrompts[teamAbbr]
       ?? DEFAULT_STRATEGY_PROMPTS[teamAbbr];
 
+    const board = this.host.getEffectiveBoard(teamAbbr);
+    const availSet = new Set(state.availableRanks);
+    const boardTopRanks = board.filter(r => availSet.has(r)).slice(0, 10);
+
     // Active insider leaks relevant to this team
     const leaks = this.getActiveLeaks();
     const relevantLeaks = leaks
@@ -993,6 +1020,7 @@ export class AIGMService {
       strategyPrompt,
       tradeablePlayers: this.getTradeablePlayers(teamAbbr),
       recentLeaks: relevantLeaks,
+      boardTopRanks,
     };
   }
 
