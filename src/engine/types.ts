@@ -105,6 +105,21 @@ export interface DraftState {
   cancelledTrades: CancelledTrade[];      // declined, expired, or invalidated trades
   playerOwnership: Record<string, string>; // playerName (lowercase) -> teamAbbr overrides
   futurePickRights: FuturePickRight[];     // tradeable future-year picks
+  feedItems?: Array<{ id: string; type: string; timestamp: number; data: any }>; // persisted social feed
+}
+
+export interface TradeLogEntry {
+  timestamp: number;
+  pickOverall: number;
+  phase: 'heuristic' | 'generate' | 'evaluate' | 'counter' | 'execute' | 'block' | 'on-clock';
+  team: string;
+  partnerTeam?: string;
+  durationMs: number;
+  result: 'filtered' | 'no-idea' | 'idea' | 'blocked-unreasonable'
+        | 'accepted' | 'declined' | 'counter' | 'executed' | 'timeout' | 'error';
+  reasoning?: string;
+  details?: string;
+  error?: string;
 }
 
 export interface BoardData {

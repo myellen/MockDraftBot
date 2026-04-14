@@ -1,0 +1,182 @@
+/* ── Lobby Screen ─────────────────────────────────────────────────────────── */
+
+.lobby {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Slow animated gradient background */
+.lobby::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at 30% 20%, rgba(59, 130, 246, 0.06) 0%, transparent 60%),
+              radial-gradient(ellipse at 70% 80%, rgba(245, 158, 11, 0.04) 0%, transparent 50%);
+  animation: lobby-drift 20s ease-in-out infinite alternate;
+  z-index: 0;
+}
+
+@keyframes lobby-drift {
+  0%   { transform: scale(1) translate(0, 0); }
+  100% { transform: scale(1.1) translate(-2%, 3%); }
+}
+
+.lobby-content {
+  position: relative;
+  z-index: 1;
+  text-align: center;
+  max-width: 520px;
+  width: 100%;
+}
+
+/* Title */
+.lobby-title {
+  font-family: var(--font-display);
+  font-size: 3.5rem;
+  letter-spacing: 0.08em;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+  line-height: 1;
+}
+
+.lobby-accent-line {
+  width: 80px;
+  height: 3px;
+  background: var(--accent-clock);
+  margin: 0 auto 8px;
+  border-radius: 2px;
+}
+
+.lobby-subtitle {
+  font-family: var(--font-heading);
+  font-weight: 500;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 40px;
+}
+
+/* Cards row */
+.lobby-cards {
+  display: flex;
+  gap: 16px;
+  width: 100%;
+}
+
+.lobby-card {
+  flex: 1;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 24px 20px;
+  text-align: left;
+}
+
+.lobby-card h3 {
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lobby-card h3::before {
+  content: '';
+  display: inline-block;
+  width: 4px;
+  height: 14px;
+  background: var(--accent-info);
+  transform: skewX(-12deg);
+  border-radius: 1px;
+}
+
+/* Room code display after creation */
+.room-code-display {
+  font-family: var(--font-display);
+  font-size: 2.5rem;
+  letter-spacing: 0.15em;
+  color: var(--accent-clock);
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.2);
+  border-radius: var(--radius-sm);
+  padding: 8px 20px;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.room-code-display:hover {
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.room-code-display .copy-hint {
+  font-family: var(--font-body);
+  font-size: 0.65rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+/* Form elements in lobby */
+.lobby-card input {
+  width: 100%;
+  margin-bottom: 10px;
+}
+
+.lobby-card button {
+  width: 100%;
+}
+
+/* Error message */
+.lobby-error {
+  margin-top: 16px;
+  padding: 10px 16px;
+  background: rgba(220, 38, 38, 0.1);
+  border: 1px solid rgba(220, 38, 38, 0.3);
+  border-radius: var(--radius-sm);
+  color: var(--accent-breaking);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+/* Rejoin banner */
+.rejoin-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 18px;
+  background: var(--bg-panel);
+  border: 1px solid var(--accent-info);
+  border-left: 3px solid var(--accent-info);
+  border-radius: var(--radius-sm);
+  margin-bottom: 20px;
+  text-align: left;
+}
+
+.rejoin-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Mobile */
+@media (max-width: 600px) {
+  .lobby-title { font-size: 2.5rem; }
+  .lobby-cards { flex-direction: column; }
+}

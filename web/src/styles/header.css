@@ -1,0 +1,149 @@
+/* ── Header Bar ──────────────────────────────────────────────────────────── */
+
+.draft-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.draft-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.draft-header-title {
+  font-family: var(--font-display);
+  font-size: 1.4rem;
+  letter-spacing: 0.06em;
+  color: var(--text-primary);
+}
+
+.draft-header-code {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  letter-spacing: 0.1em;
+  background: var(--bg-card);
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.draft-header-code:hover {
+  color: var(--text-secondary);
+}
+
+.draft-header-center {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.draft-header-pick-info {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.draft-header-pick-info .team-name {
+  color: var(--accent-clock);
+}
+
+.draft-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.draft-header-right button {
+  font-size: 0.75rem;
+  padding: 5px 12px;
+}
+
+.header-leave-btn {
+  border-color: var(--text-dim) !important;
+  color: var(--text-dim) !important;
+  font-size: 0.7rem !important;
+  padding: 4px 10px !important;
+}
+
+.header-leave-btn:hover {
+  color: var(--text-secondary) !important;
+  border-color: var(--text-secondary) !important;
+}
+
+/* On the clock banner */
+.on-clock-banner {
+  animation: pulse-glow 2s ease-in-out infinite;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  background: rgba(245, 158, 11, 0.08);
+  border-radius: var(--radius-sm);
+  padding: 4px 12px;
+}
+
+.on-clock-banner .display-text {
+  font-size: 0.8rem;
+  color: var(--accent-clock);
+}
+
+/* Admin controls in header */
+.header-admin-controls {
+  display: flex;
+  gap: 6px;
+  margin-left: 4px;
+}
+
+.header-ctrl-btn {
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 4px 12px;
+  border: 1px solid var(--border-accent);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.header-ctrl-btn:hover {
+  background: var(--bg-card-hover);
+  border-color: var(--accent-info);
+  color: var(--text-primary);
+}
+
+.header-ctrl-btn.start {
+  border-color: var(--accent-trade);
+  color: var(--accent-trade);
+}
+
+.header-ctrl-btn.start:hover {
+  background: rgba(16, 185, 129, 0.12);
+}
+
+.header-ctrl-btn.danger {
+  border-color: var(--accent-breaking);
+  color: var(--accent-breaking);
+}
+
+.header-ctrl-btn.danger:hover {
+  background: rgba(220, 38, 38, 0.12);
+}
+
+@media (max-width: 767px) {
+  .draft-header { flex-wrap: wrap; }
+  .draft-header-center { order: 3; width: 100%; justify-content: flex-start; }
+}

@@ -556,7 +556,47 @@ async function handleCPUTradeProposal(
   offeredFuture: string[],
   requestedFuture: string[],
 ): Promise<void> {
+  const proposerTeamName = TEAMS[proposerTeam]?.name ?? proposerTeam;
   const cpuTeamName = TEAMS[receiverTeam]?.name ?? receiverTeam;
+
+  const formatSide = (picks: number[], players: string[], futurePicks: string[]): string => {
+    const parts: string[] = [];
+    if (picks.length) parts.push(`picks **#${picks.join(', #')}**`);
+    if (players.length) parts.push(`players **${players.join(', ')}**`);
+    if (futurePicks.length) parts.push(`future picks **${futurePicks.map(id => {
+      const m = id.match(/^(\d+)-R(\d+)-/);
+      return m ? `${m[1]} R${m[2]}` : id;
+    }).join(', ')}**`);
+    return parts.join(' + ') || '_nothing_';
+  };
+
+  // Send trade announcement (same as human-to-human proposals)
+  const announcement = manager.getConfig().tradeAnnouncement;
+  if (announcement === 'public') {
+    await interaction.followUp({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x5865F2)
+          .setTitle('🔄 Trade Proposed')
+          .setDescription(
+            `**${proposerTeamName}** send: ${formatSide(offered, offeredPlayers, offeredFuture)}\n` +
+            `**${cpuTeamName}** send: ${formatSide(requested, requestedPlayers, requestedFuture)}`
+          )
+      ]
+    });
+  } else if (announcement === 'intrigue') {
+    await interaction.followUp({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x5865F2)
+          .setTitle('📞 Trade Call!')
+          .setDescription(`**${proposerTeamName}** is on the phone with **${cpuTeamName}**...`)
+      ]
+    });
+  } else if (announcement === 'insider') {
+    const insiderEmbed = await buildInsiderTradeEmbed(cpuTeamName);
+    await interaction.followUp({ embeds: [insiderEmbed] });
+  }
 
   // Build a PendingTrade for the AI GM to evaluate
   const trade = {
@@ -614,7 +654,8 @@ async function handleCPUTradeProposal(
     return;
   }
 
-  // Declined
+  // Declined — record for hit-rate stats
+  manager.trades.recordCancelledTrade(trade, 'declined');
   await interaction.editReply(
     `The **${cpuTeamName}** GM declined your trade.\n*"${evaluation.reasoning}"*`
   );

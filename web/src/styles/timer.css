@@ -1,0 +1,42 @@
+/* ── Timer Ring ──────────────────────────────────────────────────────────── */
+
+.timer-ring {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.timer-ring svg {
+  transform: rotate(-90deg);
+}
+
+.timer-ring-bg {
+  fill: none;
+  stroke: var(--border-subtle);
+  stroke-width: 3;
+}
+
+.timer-ring-progress {
+  fill: none;
+  stroke: var(--accent-clock);
+  stroke-width: 3;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 1s linear, stroke 0.5s;
+}
+
+.timer-ring-progress.urgent {
+  stroke: var(--accent-breaking);
+}
+
+.timer-ring-label {
+  position: absolute;
+  font-family: var(--font-display);
+  font-size: 1rem;
+  letter-spacing: 0.05em;
+  color: var(--text-primary);
+}
+
+.timer-ring-label.urgent {
+  color: var(--accent-breaking);
+}

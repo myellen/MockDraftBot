@@ -1,0 +1,881 @@
+/* ── Command Center ───────────────────────────────────────────────────────── */
+
+.command-center {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Tabs */
+.command-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+  backdrop-filter: blur(12px);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.command-tab {
+  flex: 1;
+  font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 10px 12px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  text-align: center;
+}
+
+.command-tab:hover {
+  color: var(--text-secondary);
+  background: transparent;
+}
+
+.command-tab.active {
+  color: var(--accent-info);
+  border-bottom-color: var(--accent-info);
+}
+
+.command-tab-badge {
+  font-size: 0.6rem;
+  background: var(--accent-breaking);
+  color: #fff;
+  padding: 0 5px;
+  border-radius: 8px;
+  margin-left: 4px;
+}
+
+.command-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--pad-panel);
+}
+
+/* ── On The Clock ────────────────────────────────────────────────────────── */
+
+.on-clock-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.on-clock-info {
+  padding: 14px;
+  background: rgba(245, 158, 11, 0.06);
+  border: 1px solid rgba(245, 158, 11, 0.15);
+  border-radius: var(--radius-md);
+  text-align: center;
+}
+
+.on-clock-team {
+  font-family: var(--font-display);
+  font-size: 1.8rem;
+  color: var(--accent-clock);
+  margin-bottom: 4px;
+}
+
+.on-clock-pick {
+  font-family: var(--font-heading);
+  font-weight: 500;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.on-clock-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.on-clock-actions button {
+  flex: 1;
+}
+
+/* ── Prospect List ───────────────────────────────────────────────────────── */
+
+.prospect-search {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.prospect-search input {
+  flex: 1;
+}
+
+.position-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.pos-pill {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 3px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.pos-pill:hover {
+  border-color: var(--accent-info);
+  color: var(--text-secondary);
+  background: transparent;
+}
+
+.pos-pill.active {
+  border-color: var(--accent-info);
+  background: rgba(59, 130, 246, 0.15);
+  color: var(--accent-info);
+}
+
+.prospect-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.prospect-table th {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-accent);
+  position: sticky;
+  top: 0;
+  background: var(--bg-panel);
+}
+
+.prospect-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+}
+
+.prospect-table tr:hover td {
+  background: var(--bg-card-hover);
+}
+
+.prospect-table tr.selected td {
+  background: rgba(59, 130, 246, 0.1);
+  border-color: rgba(59, 130, 246, 0.2);
+}
+
+.prospect-rank {
+  font-family: var(--font-display);
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.prospect-name {
+  font-family: var(--font-heading);
+  font-weight: 600;
+}
+
+.prospect-draft-btn {
+  font-size: 0.65rem !important;
+  padding: 2px 8px !important;
+}
+
+/* ── Not your turn message ───────────────────────────────────────────────── */
+
+.not-your-turn {
+  text-align: center;
+  padding: 32px 16px;
+  color: var(--text-dim);
+}
+
+.not-your-turn h3 {
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+/* ── Settings Panel ──────────────────────────────────────────────────────── */
+
+.settings-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.setting-label {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.setting-label small {
+  display: block;
+  font-family: var(--font-body);
+  font-weight: 300;
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+/* Toggle switch */
+.toggle {
+  position: relative;
+  width: 38px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  inset: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border-accent);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.toggle-slider::before {
+  content: '';
+  position: absolute;
+  height: 14px;
+  width: 14px;
+  left: 2px;
+  bottom: 2px;
+  background: var(--text-dim);
+  border-radius: 50%;
+  transition: transform 0.2s, background 0.2s;
+}
+
+.toggle input:checked + .toggle-slider {
+  background: rgba(59, 130, 246, 0.2);
+  border-color: var(--accent-info);
+}
+
+.toggle input:checked + .toggle-slider::before {
+  transform: translateX(18px);
+  background: var(--accent-info);
+}
+
+/* Admin buttons row */
+.admin-actions {
+  display: flex;
+  gap: 8px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-subtle);
+  margin-top: 8px;
+}
+
+.admin-actions button {
+  flex: 1;
+}
+
+/* ── My Team ─────────────────────────────────────────────────────────────── */
+
+.team-select-btn:hover:not(:disabled) {
+  background: var(--bg-card-hover) !important;
+  transform: scale(1.02);
+}
+
+.team-select-btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.my-team-picks {
+  margin-top: 12px;
+}
+
+.my-team-picks table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.my-team-picks th {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-accent);
+}
+
+.my-team-picks td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.upcoming-picks {
+  margin-top: 16px;
+}
+
+.upcoming-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 0.8rem;
+}
+
+.upcoming-pick-number {
+  font-family: var(--font-display);
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  min-width: 28px;
+}
+
+/* ── Trade Center ────────────────────────────────────────────────────────── */
+
+.trade-section {
+  margin-bottom: 20px;
+}
+
+.trade-card {
+  padding: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  margin-bottom: 8px;
+}
+
+.trade-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.trade-card-teams {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.trade-card-details {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+  line-height: 1.5;
+}
+
+.trade-card-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.trade-card-actions button {
+  font-size: 0.7rem;
+  padding: 4px 10px;
+}
+
+.cpu-offer-card {
+  border-color: rgba(245, 158, 11, 0.25);
+  background: rgba(245, 158, 11, 0.04);
+}
+
+.trade-result-accepted {
+  border-color: rgba(34, 197, 94, 0.3);
+  background: rgba(34, 197, 94, 0.05);
+}
+
+.trade-result-declined {
+  border-color: rgba(220, 38, 38, 0.25);
+  background: rgba(220, 38, 38, 0.04);
+}
+
+.trade-propose-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.trade-propose-form select,
+.trade-propose-form input {
+  width: 100%;
+}
+
+.trade-propose-form label {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.pick-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.pick-chip {
+  font-family: var(--font-display);
+  font-size: 0.7rem;
+  padding: 2px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-deep);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.pick-chip:hover {
+  border-color: var(--accent-info);
+}
+
+.pick-chip.selected {
+  border-color: var(--accent-info);
+  background: rgba(59, 130, 246, 0.15);
+  color: var(--accent-info);
+}
+
+/* Status message */
+.status-msg {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  font-style: italic;
+  padding: 4px 0;
+}
+
+.status-msg.error {
+  color: var(--accent-breaking);
+}
+
+.status-msg.success {
+  color: var(--accent-trade);
+}
+
+/* ── AI Chat ────────────────────────────────────────────────────────────── */
+
+.ai-chat {
+  display: flex;
+  flex-direction: column;
+  min-height: 400px;
+}
+
+.ai-chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent-info);
+}
+
+.ai-chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 200px;
+  max-height: 500px;
+}
+
+.ai-chat-hint {
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  padding: 32px 16px;
+  line-height: 1.6;
+}
+
+.ai-chat-hint em {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+.ai-chat-msg {
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.ai-chat-msg.user {
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.15);
+}
+
+.ai-chat-msg.assistant {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+}
+
+.ai-chat-msg-label {
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 4px;
+}
+
+.ai-chat-msg.user .ai-chat-msg-label {
+  color: var(--accent-info);
+}
+
+.ai-chat-msg.assistant .ai-chat-msg-label {
+  color: var(--accent-pick);
+}
+
+.ai-chat-msg-text {
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+/* Markdown body inside chat messages */
+.ai-chat-msg-text .markdown-body {
+  font-size: 0.8rem;
+  line-height: 1.6;
+}
+
+.ai-chat-msg-text .markdown-body p {
+  margin: 0 0 6px;
+}
+
+.ai-chat-msg-text .markdown-body p:last-child {
+  margin-bottom: 0;
+}
+
+.ai-chat-msg-text .markdown-body strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.ai-chat-msg-text .markdown-body em {
+  color: var(--text-secondary);
+}
+
+.ai-chat-msg-text .markdown-body blockquote {
+  border-left: 2px solid var(--border-accent);
+  padding-left: 8px;
+  margin: 6px 0;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.ai-chat-msg-text .markdown-body ul,
+.ai-chat-msg-text .markdown-body ol {
+  margin: 4px 0;
+  padding-left: 18px;
+}
+
+.ai-chat-msg-text .markdown-body li {
+  margin-bottom: 2px;
+}
+
+.ai-chat-msg-text .markdown-body code {
+  font-family: 'Courier New', monospace;
+  font-size: 0.75rem;
+  background: var(--bg-deep);
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: var(--accent-info);
+}
+
+.ai-chat-msg-text .markdown-body pre {
+  background: var(--bg-deep);
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  margin: 6px 0;
+}
+
+.ai-chat-msg-text .markdown-body pre code {
+  background: none;
+  padding: 0;
+}
+
+.ai-chat-msg-text .markdown-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 6px 0;
+  font-size: 0.75rem;
+}
+
+.ai-chat-msg-text .markdown-body th {
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border-accent);
+  color: var(--text-dim);
+  font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+}
+
+.ai-chat-msg-text .markdown-body td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.ai-chat-msg-text .markdown-body h1,
+.ai-chat-msg-text .markdown-body h2,
+.ai-chat-msg-text .markdown-body h3 {
+  font-family: var(--font-heading);
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 8px 0 4px;
+}
+
+.ai-chat-msg-text .markdown-body h1 { font-size: 1rem; }
+.ai-chat-msg-text .markdown-body h2 { font-size: 0.9rem; }
+.ai-chat-msg-text .markdown-body h3 { font-size: 0.85rem; }
+
+.ai-chat-msg-text .markdown-body hr {
+  border: none;
+  border-top: 1px solid var(--border-subtle);
+  margin: 8px 0;
+}
+
+.ai-chat-msg-text .markdown-body a {
+  color: var(--accent-info);
+  text-decoration: none;
+}
+
+.ai-chat-msg-text .markdown-body a:hover {
+  text-decoration: underline;
+}
+
+.ai-thinking {
+  color: var(--text-dim);
+  font-style: italic;
+  animation: pulse-glow 1.5s ease-in-out infinite;
+}
+
+.ai-chat-input {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.ai-chat-input input {
+  flex: 1;
+  font-size: 0.8rem;
+}
+
+.ai-chat-input button {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  padding: 6px 14px;
+}
+
+/* ── Leak Panel ─────────────────────────────────────────────────────────── */
+
+.leak-panel {
+  padding: 16px;
+}
+
+.leak-label {
+  display: block;
+  font-family: var(--font-heading);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
+.leak-input {
+  width: 100%;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 0.82rem;
+  padding: 10px 12px;
+  resize: vertical;
+  min-height: 60px;
+  box-sizing: border-box;
+}
+
+.leak-input::placeholder {
+  color: var(--text-dim);
+  opacity: 0.6;
+}
+
+.leak-input:focus {
+  outline: none;
+  border-color: var(--accent-info);
+}
+
+.leak-controls {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  align-items: center;
+}
+
+.leak-select {
+  flex: 1;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  padding: 6px 8px;
+}
+
+.leak-error {
+  margin-top: 10px;
+  font-size: 0.75rem;
+  color: var(--accent-breaking);
+}
+
+.leak-result {
+  margin-top: 14px;
+}
+
+.leak-tweet {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+}
+
+.leak-tweet-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.leak-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.leak-tweet-author {
+  display: flex;
+  flex-direction: column;
+}
+
+.leak-tweet-name {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: 0.82rem;
+  color: var(--text-primary);
+}
+
+.leak-tweet-handle {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+
+.leak-tweet-body {
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+.leak-sent-note {
+  margin-top: 6px;
+  font-size: 0.65rem;
+  color: var(--accent-info);
+  font-family: var(--font-heading);
+  text-transform: uppercase;
+}
+
+/* ── Trade Leaderboards ────────────────────────────────────────────────── */
+
+.trade-leaderboards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 600px) {
+  .trade-leaderboards {
+    grid-template-columns: 1fr;
+  }
+}
+
+.leaderboard-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.leaderboard-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  font-size: 0.78rem;
+  border-radius: var(--radius-sm);
+}
+
+.leaderboard-row:nth-child(odd) {
+  background: var(--bg-card);
+}
+
+.leaderboard-rank {
+  min-width: 24px;
+  font-family: var(--font-heading);
+  font-weight: 600;
+  text-align: center;
+}
+
+.leaderboard-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.leaderboard-stat {
+  font-family: var(--font-display);
+  color: var(--text-dim);
+  white-space: nowrap;
+}

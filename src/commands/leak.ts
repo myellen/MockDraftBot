@@ -105,6 +105,9 @@ export async function execute(
       .setFooter({ text: '𝕏' })
       .setTimestamp();
 
+    // Register leak so AI GMs factor it into trade decisions
+    manager.aiGM.addLeak(leakerTeam ?? null, info, tweet);
+
     await interaction.editReply('🤫 Your leak has been anonymized and passed to an insider. Only they know who talked.');
     await interaction.followUp({ embeds: [embed] });
 

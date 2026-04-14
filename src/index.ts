@@ -6,7 +6,8 @@ import { isOllamaConfigured } from './llm/OllamaService';
 import { buildIndex as buildEmbeddingIndex } from './llm/EmbeddingService';
 
 const token = process.env.DISCORD_TOKEN;
-if (!token) throw new Error('Missing DISCORD_TOKEN in environment');
+const webPort = process.env.WEB_PORT ? Number(process.env.WEB_PORT) : null;
+if (!token && !webPort) throw new Error('Must set DISCORD_TOKEN and/or WEB_PORT');
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
@@ -126,4 +127,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 });
 
-client.login(token);
+if (token) {
+  client.login(token);
+} else {
+  console.log('⚠️  No DISCORD_TOKEN — running in web-only mode');
+}
+
+// ─── Web server (optional, alongside Discord) ────────────────────────────────
+
+if (webPort) {
+  import('./web/RoomManager').then(async ({ RoomManager }) => {
+    const { startWebServer } = await import('./web/WebServer');
+    const rm = new RoomManager();
+    await rm.loadExistingRooms();
+    startWebServer(rm, webPort);
+  }).catch(err => {
+    console.error('Failed to start web server:', err);
+  });
+}

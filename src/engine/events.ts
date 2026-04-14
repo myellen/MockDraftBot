@@ -11,10 +11,11 @@ export interface DraftEventMap {
   'draft:resumed':       Record<string, never>;
   'draft:reset':         Record<string, never>;
   'trade:executed':      { trade: PendingTrade };
-  'trade:cancelled':     { trade: PendingTrade; reason: TradeCancelReason };
+  'trade:cancelled':     { trade: PendingTrade; reason: TradeCancelReason; reasoning?: string };
   'trade:chatter':       { team1: string; team2: string; outcome: string; reasoning: string };
   'cpu-offer:sent':      { offer: CPUOffer };
   'cpu-offer:resolved':  { offerId: string; accepted: boolean };
+  'insider:tweet':       { name: string; handle: string; avatar: string; tweet: string };
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

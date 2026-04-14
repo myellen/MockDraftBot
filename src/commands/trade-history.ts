@@ -3,13 +3,16 @@ import { DraftManager } from '../discord/DraftManager';
 import { TEAMS } from '../data/teams';
 import { TEAM_EMOJI } from '../utils/teamEmoji';
 import { buildTradeChartUrl } from '../utils/embeds';
-import { PendingTrade, PickSlot } from '../engine/types';
+import { FuturePickRight, PendingTrade, PickSlot } from '../engine/types';
 
 export const data = new SlashCommandBuilder()
   .setName('trade-history')
   .setDescription('View all completed trades in chronological order');
 
-function formatSide(overalls: number[], players: string[], futurePicks: string[], slotMap: Map<number, PickSlot>): string {
+function formatSide(
+  overalls: number[], players: string[], futurePicks: string[],
+  slotMap: Map<number, PickSlot>, offeringTeam?: string, rights?: FuturePickRight[],
+): string {
   const parts: string[] = [];
   for (const o of overalls) {
     const s = slotMap.get(o);
@@ -17,9 +20,25 @@ function formatSide(overalls: number[], players: string[], futurePicks: string[]
   }
   for (const p of players) parts.push(p);
   for (const fp of futurePicks) {
-    const [year, roundTag, team] = fp.split('-');
-    const via = team ? ` (${team})` : '';
-    parts.push(`${year} ${roundTag}${via}`);
+    const s = String(fp);
+    const [year, roundTag, team] = s.split('-');
+    if (roundTag) {
+      const via = team ? ` (${team})` : '';
+      parts.push(`${year} ${roundTag}${via}`);
+    } else if (rights && offeringTeam) {
+      // Bare year — resolve against futurePickRights
+      const yr = parseInt(year);
+      const own = rights.find(f => f.year === yr && f.originalTeam === offeringTeam);
+      const any = rights.find(f => f.year === yr && f.currentTeam === offeringTeam);
+      const resolved = own ?? any;
+      if (resolved) {
+        parts.push(`${year} R${resolved.round} (${resolved.originalTeam})`);
+      } else {
+        parts.push(`${year} future pick`);
+      }
+    } else {
+      parts.push(`${year} future pick`);
+    }
   }
   return parts.join(', ') || '_nothing_';
 }
@@ -34,8 +53,10 @@ export async function execute(
     return;
   }
 
-  const schedule = manager.getState().schedule;
+  const state = manager.getState();
+  const schedule = state.schedule;
   const slotMap = new Map(schedule.map(s => [s.overall, s]));
+  const rights = state.futurePickRights;
 
   const lines = history.map((t, i) => {
     const e1 = TEAM_EMOJI[t.proposerTeam] ?? '';
@@ -43,11 +64,18 @@ export async function execute(
     const name1 = TEAMS[t.proposerTeam]?.name ?? t.proposerTeam;
     const name2 = TEAMS[t.receiverTeam]?.name ?? t.receiverTeam;
 
-    const gm1 = t.proposerUserId && t.proposerUserId !== 'admin' ? ` (${manager.resolveUserName(t.proposerUserId)})` : '';
-    const gm2 = t.receiverUserId && t.receiverUserId !== 'admin' ? ` (${manager.resolveUserName(t.receiverUserId)})` : '';
+    const fmtGM = (uid: string | null | undefined) => {
+      if (!uid || uid === 'admin') return '';
+      if (uid === 'cpu' || uid === 'human') return ' (AI)';
+      return ` (${manager.resolveUserName(uid)})`;
+    };
+    const gm1 = fmtGM(t.proposerUserId);
+    const gm2 = fmtGM(t.receiverUserId);
 
-    const team1Gets = formatSide(t.requestedOveralls, t.requestedPlayers, t.requestedFuturePicks, slotMap);
-    const team2Gets = formatSide(t.offeredOveralls, t.offeredPlayers, t.offeredFuturePicks, slotMap);
+    // team1 (proposer) receives what was requested; requestedFuturePicks were from receiverTeam
+    const team1Gets = formatSide(t.requestedOveralls, t.requestedPlayers, t.requestedFuturePicks, slotMap, t.receiverTeam, rights);
+    // team2 (receiver) receives what was offered; offeredFuturePicks were from proposerTeam
+    const team2Gets = formatSide(t.offeredOveralls, t.offeredPlayers, t.offeredFuturePicks, slotMap, t.proposerTeam, rights);
 
     const hasPicks = t.offeredOveralls.length > 0 || t.requestedOveralls.length > 0 ||
       t.offeredFuturePicks.length > 0 || t.requestedFuturePicks.length > 0;
@@ -104,29 +132,39 @@ export async function execute(
     .setTitle('📊 Trade Leaderboard')
     .setDescription(leaderboardLines.join('\n'));
 
-  // Build hit rate leaderboard
+  // Build hit rate leaderboard — tracks both proposer and receiver sides
   const cancelled = manager.trades.getCancelledTrades();
   const assignments = manager.getState().assignments;
-  const hitRateData = new Map<string, { emoji: string; name: string; gm: string | null; accepted: number; total: number }>();
+  const isCPU = (abbr: string) => !assignments[abbr];
+  const hitRateData = new Map<string, { emoji: string; name: string; gm: string | null; isCPU: boolean; accepted: number; total: number }>();
   const ensureTeam = (abbr: string) => {
     if (!hitRateData.has(abbr)) {
       hitRateData.set(abbr, {
         emoji: TEAM_EMOJI[abbr] ?? '',
         name: TEAMS[abbr]?.name ?? abbr,
         gm: assignments[abbr] ?? null,
+        isCPU: isCPU(abbr),
         accepted: 0,
         total: 0,
       });
     }
   };
   for (const t of history) {
+    // Both sides participated in a completed trade
     ensureTeam(t.proposerTeam);
     hitRateData.get(t.proposerTeam)!.accepted++;
     hitRateData.get(t.proposerTeam)!.total++;
+    ensureTeam(t.receiverTeam);
+    hitRateData.get(t.receiverTeam)!.accepted++;
+    hitRateData.get(t.receiverTeam)!.total++;
   }
   for (const t of cancelled) {
+    // Proposer's offer was rejected
     ensureTeam(t.proposerTeam);
     hitRateData.get(t.proposerTeam)!.total++;
+    // Receiver declined — counts as an attempt for them too
+    ensureTeam(t.receiverTeam);
+    hitRateData.get(t.receiverTeam)!.total++;
   }
   const hitRateSorted = [...hitRateData.values()]
     .filter(e => e.total > 0)
@@ -142,7 +180,7 @@ export async function execute(
     }
     const prefix = hitMedalIdx < 3 ? medals[hitMedalIdx] : `**${hitRank}.**`;
     const pct = Math.round(entry.rate * 100);
-    const gmTag = entry.gm ? ` (${manager.resolveUserName(entry.gm)})` : '';
+    const gmTag = entry.isCPU ? ' (AI)' : entry.gm ? ` (${manager.resolveUserName(entry.gm)})` : '';
     return `${prefix} ${entry.emoji} ${entry.name}${gmTag} — ${pct}% (${entry.accepted}/${entry.total})`;
   });
 

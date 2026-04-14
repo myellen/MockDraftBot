@@ -1,0 +1,130 @@
+/* ── Draft Board ──────────────────────────────────────────────────────────── */
+
+.draft-board {
+  padding: var(--pad-panel);
+}
+
+.draft-board .section-header {
+  position: sticky;
+  top: 0;
+  background: var(--bg-panel);
+  z-index: 2;
+  padding-top: 4px;
+}
+
+.board-round {
+  margin-bottom: 12px;
+}
+
+.board-round-label {
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+  padding: 4px 0 6px;
+  position: sticky;
+  top: 34px;
+  background: var(--bg-panel);
+  z-index: 1;
+}
+
+/* ── Pick Cell ───────────────────────────────────────────────────────────── */
+
+.pick-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-left: 4px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+  min-height: 34px;
+  transition: background 0.15s;
+  cursor: default;
+}
+
+.pick-cell:hover {
+  background: var(--bg-card-hover);
+}
+
+.pick-cell.filled {
+  animation: scale-reveal 0.3s ease-out;
+}
+
+.pick-cell.current {
+  background: rgba(245, 158, 11, 0.06);
+  border-left-color: var(--accent-clock) !important;
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.pick-cell.traded {
+  position: relative;
+}
+
+.pick-cell.traded::after {
+  content: '\2194';
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 1rem;
+  color: var(--accent-trade);
+  opacity: 0.85;
+}
+
+.pick-number {
+  font-family: var(--font-display);
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  min-width: 26px;
+  text-align: center;
+}
+
+.pick-cell.filled .pick-number {
+  color: var(--text-secondary);
+}
+
+.pick-team-logo {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  object-fit: contain;
+}
+
+.pick-prospect {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.pick-prospect-name {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: 0.78rem;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pick-prospect-info {
+  font-size: 0.65rem;
+  color: var(--text-dim);
+}
+
+.pick-team-name {
+  font-family: var(--font-heading);
+  font-weight: 500;
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Empty cell */
+.pick-cell:not(.filled) .pick-team-name {
+  color: var(--text-dim);
+  font-weight: 400;
+}

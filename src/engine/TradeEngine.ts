@@ -14,7 +14,8 @@ export interface TradeEngineHost {
   isAuthorizedForTeam(userId: string, teamAbbr: string): boolean;
   resolvePlayer(nameQuery: string, teamAbbr: string): string | null;
   clearTimer(): void;
-  refreshClock(): Promise<void>;
+  refreshClock(): void;
+  advanceIfIdle(): Promise<void>;
   emit<K extends keyof DraftEventMap>(event: K, data: DraftEventMap[K]): void;
 }
 
@@ -84,7 +85,8 @@ export class TradeEngine {
     const involvedPicks = new Set([...trade.offeredOveralls, ...trade.requestedOveralls]);
     if (currentSlot && involvedPicks.has(currentSlot.overall)) {
       this.host.clearTimer();
-      await this.host.refreshClock();
+      this.host.refreshClock();
+      await this.host.advanceIfIdle();
     }
   }
 
@@ -364,7 +366,8 @@ export class TradeEngine {
     offeredPlayers: string[] = [],
     requestedPlayers: string[] = [],
     offeredFuturePickIds: string[] = [],
-    requestedFuturePickIds: string[] = []
+    requestedFuturePickIds: string[] = [],
+    receiverTeamOverride?: string,
   ): Promise<{ success: boolean; error?: string; trade?: PendingTrade }> {
     if (this.state.status !== 'active' && this.state.status !== 'paused') {
       return { success: false, error: 'No active draft.' };
@@ -380,7 +383,7 @@ export class TradeEngine {
     const proposerTeam = this.host.getUserTeam(proposerUserId);
     if (!proposerTeam) return { success: false, error: 'You do not have a registered team.' };
 
-    const receiverTeam = this.host.getUserTeam(receiverUserId);
+    const receiverTeam = receiverTeamOverride ?? this.host.getUserTeam(receiverUserId);
     if (!receiverTeam) return { success: false, error: 'That user does not have a registered team.' };
 
     if (proposerTeam === receiverTeam) return { success: false, error: 'Cannot trade with yourself.' };
@@ -575,6 +578,11 @@ export class TradeEngine {
 
   getCancelledTrades(): CancelledTrade[] {
     return this.state.cancelledTrades;
+  }
+
+  /** Record a CPU trade decline/expiry so it appears in hit-rate stats. */
+  recordCancelledTrade(trade: PendingTrade, reason: TradeCancelReason): void {
+    this.state.cancelledTrades.push({ ...trade, cancelReason: reason, cancelledAt: Date.now() });
   }
 
   isPickInPendingTrade(overall: number): boolean {

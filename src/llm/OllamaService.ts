@@ -36,6 +36,43 @@ export function isOllamaConfigured(): boolean {
   return !!process.env.OLLAMA_HOST || !!process.env.OLLAMA_MODEL;
 }
 
+// ── Concurrency limiter (Ollama Cloud Free = 1 concurrent request) ──────
+
+const MAX_CONCURRENT = parseInt(process.env.OLLAMA_MAX_CONCURRENT ?? '1', 10);
+let activeRequests = 0;
+const waitQueue: Array<() => void> = [];
+
+function acquire(): Promise<void> {
+  if (activeRequests < MAX_CONCURRENT) {
+    activeRequests++;
+    return Promise.resolve();
+  }
+  return new Promise<void>(resolve => waitQueue.push(resolve));
+}
+
+function release(): void {
+  const next = waitQueue.shift();
+  if (next) {
+    next(); // hand the slot to the next waiter
+  } else {
+    activeRequests--;
+  }
+}
+
+async function withSlot<T>(fn: () => Promise<T>): Promise<T> {
+  await acquire();
+  try {
+    return await fn();
+  } finally {
+    release();
+  }
+}
+
+/** Current queue depth for monitoring. */
+export function getQueueStats(): { active: number; queued: number } {
+  return { active: activeRequests, queued: waitQueue.length };
+}
+
 /**
  * Batch-embed one or more texts using the local embedding model.
  * Uses a separate local Ollama instance (OLLAMA_EMBED_HOST, default localhost:11434)
@@ -61,39 +98,40 @@ export async function embed(input: string | string[]): Promise<number[][]> {
  * Send a chat completion request and parse the response as JSON.
  * Uses format: 'json' to instruct Ollama to return valid JSON.
  */
-export async function chatJSON<T>(systemPrompt: string, userMessage: string): Promise<T> {
-  const client = getClient();
-  const config = getConfig();
+export async function chatJSON<T>(systemPrompt: string, userMessage: string, temperature = 0.3): Promise<T> {
+  return withSlot(async () => {
+    const client = getClient();
+    const config = getConfig();
 
-  const response = await client.chat({
-    model: config.model,
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userMessage },
-    ],
-    format: 'json',
-    options: {
-      temperature: 0.3,
-      num_predict: 16384,
-      num_ctx: config.numCtx,
-    },
-  });
+    const response = await client.chat({
+      model: config.model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userMessage },
+      ],
+      format: 'json',
+      options: {
+        temperature,
+        num_predict: 16384,
+        num_ctx: config.numCtx,
+      },
+    });
 
-  let text = response.message.content.trim();
-  console.log('[OllamaService] chatJSON raw response:', text);
-  // Strip wrapping code fences — only the outer ones, not code blocks inside JSON string values
-  text = text.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?\s*```\s*$/i, '').trim();
-  try {
-    return JSON.parse(text) as T;
-  } catch {
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      try {
-        return JSON.parse(jsonMatch[0]) as T;
-      } catch { /* fall through */ }
+    let text = response.message.content.trim();
+    console.log('[OllamaService] chatJSON raw response:', text);
+    text = text.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?\s*```\s*$/i, '').trim();
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
+          return JSON.parse(jsonMatch[0]) as T;
+        } catch { /* fall through */ }
+      }
+      throw new Error(`Invalid JSON from LLM: ${text.slice(0, 500)}`);
     }
-    throw new Error(`Invalid JSON from LLM: ${text.slice(0, 500)}`);
-  }
+  });
 }
 
 /**
@@ -105,63 +143,65 @@ export async function chatJSONWithHistory<T>(
   history: Array<{ role: 'user' | 'assistant'; content: string }>,
   userMessage: string,
 ): Promise<T> {
-  const client = getClient();
-  const config = getConfig();
+  return withSlot(async () => {
+    const client = getClient();
+    const config = getConfig();
 
-  const messages = [
-    { role: 'system' as const, content: systemPrompt },
-    ...history.map(h => ({ role: h.role as 'user' | 'assistant', content: h.content })),
-    { role: 'user' as const, content: userMessage },
-  ];
+    const messages = [
+      { role: 'system' as const, content: systemPrompt },
+      ...history.map(h => ({ role: h.role as 'user' | 'assistant', content: h.content })),
+      { role: 'user' as const, content: userMessage },
+    ];
 
-  const response = await client.chat({
-    model: config.model,
-    messages,
-    format: 'json',
-    options: {
-      temperature: 0.3,
-      num_predict: 16384,
-      num_ctx: config.numCtx,
-    },
-  });
+    const response = await client.chat({
+      model: config.model,
+      messages,
+      format: 'json',
+      options: {
+        temperature: 0.3,
+        num_predict: 16384,
+        num_ctx: config.numCtx,
+      },
+    });
 
-  let text = response.message.content.trim();
-  console.log('[OllamaService] chatJSONWithHistory raw response:', text);
-  // Strip wrapping code fences — only the outer ones, not code blocks inside JSON string values
-  text = text.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?\s*```\s*$/i, '').trim();
-  // If that still fails to parse, try extracting the JSON object directly
-  try {
-    return JSON.parse(text) as T;
-  } catch {
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      try {
-        return JSON.parse(jsonMatch[0]) as T;
-      } catch { /* fall through */ }
+    let text = response.message.content.trim();
+    console.log('[OllamaService] chatJSONWithHistory raw response:', text);
+    text = text.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?\s*```\s*$/i, '').trim();
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
+          return JSON.parse(jsonMatch[0]) as T;
+        } catch { /* fall through */ }
+      }
+      throw new Error(`Invalid JSON from LLM: ${text.slice(0, 500)}`);
     }
-    throw new Error(`Invalid JSON from LLM: ${text.slice(0, 500)}`);
-  }
+  });
 }
 
 /**
  * Send a chat completion request and return the raw text response.
  */
 export async function chatText(systemPrompt: string, userMessage: string, temperature = 0.3): Promise<string> {
-  const client = getClient();
-  const config = getConfig();
+  return withSlot(async () => {
+    const client = getClient();
+    const config = getConfig();
 
-  const response = await client.chat({
-    model: config.model,
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userMessage },
-    ],
-    options: {
-      temperature,
-      num_predict: 16384,
-      num_ctx: config.numCtx,
-    },
+    const response = await client.chat({
+      model: config.model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userMessage },
+      ],
+      options: {
+        temperature,
+        num_predict: 16384,
+        num_ctx: config.numCtx,
+      },
+    });
+
+    return response.message.content.trim();
   });
-
-  return response.message.content.trim();
 }

@@ -48,7 +48,7 @@ export const DEFAULT_BOARD_DATA: BoardData = {
 export const DEFAULT_STATE: DraftState = {
   schemaVersion: 1,
   status: 'idle',
-  config: { channelId: null, timerSeconds: null, autoPick: true, rounds: 7, allowPlayerTrades: true, tradeAnnouncement: 'intrigue', enforceSalaryCap: false, cpuTrading: false },
+  config: { channelId: null, timerSeconds: 60, autoPick: true, rounds: 7, allowPlayerTrades: true, tradeAnnouncement: 'insider', enforceSalaryCap: true, cpuTrading: true },
   assignments: {},
   coManagers: {},
   schedule: [],
@@ -82,6 +82,7 @@ export class DraftEngine extends TypedEventEmitter<DraftEventMap> {
   private state: DraftState;
   private boardData: BoardData;
   private timerHandle: string | null = null;
+  private advancing = false;
   public readonly trades: TradeEngine;
   public readonly aiGM: AIGMService;
 
@@ -102,6 +103,7 @@ export class DraftEngine extends TypedEventEmitter<DraftEventMap> {
       resolvePlayer: (name, team) => this.resolvePlayer(name, team),
       clearTimer: () => this.clearTimer(),
       refreshClock: () => this.refreshClock(),
+      advanceIfIdle: () => this.advanceIfIdle(),
       emit: (k, p) => this.emit(k, p),
     });
     this.aiGM = new AIGMService({
@@ -109,6 +111,12 @@ export class DraftEngine extends TypedEventEmitter<DraftEventMap> {
       getBoardData: () => this.boardData,
       getTradeManager: () => this.trades,
       emit: (k, p) => this.emit(k, p),
+      persist: () => this.persist(),
+    });
+
+    // Invalidate CPU offers when a trade executes (picks may have changed hands)
+    this.on('trade:executed', ({ trade }) => {
+      this.aiGM.invalidateSupersededOffers(trade);
     });
   }
 
@@ -180,7 +188,9 @@ export class DraftEngine extends TypedEventEmitter<DraftEventMap> {
     await this.persist();
 
     this.emit('draft:started', {} as Record<string, never>);
-    await this.advance();
+    // Fire-and-forget: advance() loops through CPU picks asynchronously
+    // so start() returns immediately and the caller isn't blocked
+    void this.advance().catch(err => console.error('[DraftEngine] advance error after start:', err));
     return { success: true };
   }
 
@@ -188,6 +198,7 @@ export class DraftEngine extends TypedEventEmitter<DraftEventMap> {
     if (this.state.status !== 'active') return;
     this.state.status = 'paused';
     this.clearTimer();
+    this.aiGM.cancelDeliberation();
     await this.persist();
     this.emit('draft:paused', {} as Record<string, never>);
   }
@@ -202,6 +213,7 @@ export class DraftEngine extends TypedEventEmitter<DraftEventMap> {
 
   async reset(): Promise<void> {
     this.clearTimer();
+    this.aiGM.reset();
     this.state = {
       ...this.state,
       status: 'idle',
@@ -213,6 +225,7 @@ export class DraftEngine extends TypedEventEmitter<DraftEventMap> {
       pendingTrades: [],
       tradeHistory: [],
       cancelledTrades: [],
+      feedItems: [],
     };
     await this.persist();
     this.emit('draft:reset', {} as Record<string, never>);
@@ -245,6 +258,7 @@ export class DraftEngine extends TypedEventEmitter<DraftEventMap> {
       return { success: false, error: 'That player has already been drafted.' };
     }
 
+    this.aiGM.cancelDeliberation();
     this.clearTimer();
     const pick = this.recordPick(slot, prospectRank, userId, false);
     this.state.currentPickIndex++;
@@ -266,6 +280,7 @@ export class DraftEngine extends TypedEventEmitter<DraftEventMap> {
       return { success: false, error: 'That player has already been drafted.' };
     }
 
+    this.aiGM.cancelDeliberation();
     this.clearTimer();
     const pick = this.recordPick(slot, prospectRank, 'admin', false);
     this.state.currentPickIndex++;
@@ -279,7 +294,8 @@ export class DraftEngine extends TypedEventEmitter<DraftEventMap> {
     if (this.state.status !== 'active') {
       return { success: false, error: 'The draft is not currently active.' };
     }
-    const slot = this.state.schedule[this.state.currentPickIndex];
+    const expectedIndex = this.state.currentPickIndex;
+    const slot = this.state.schedule[expectedIndex];
     if (!slot) return { success: false, error: 'No pick available.' };
 
     if (userId !== null && !this.isAuthorizedForTeam(userId, slot.currentTeam)) {
@@ -290,6 +306,14 @@ export class DraftEngine extends TypedEventEmitter<DraftEventMap> {
     const bestRank = await this.getBestPickForTeam(slot.currentTeam);
     if (bestRank === undefined) return { success: false, error: 'No prospects available.' };
 
+    // Guard against state mutation during async getBestPickForTeam
+    // (a trade may have changed the current pick while we awaited the LLM)
+    if (this.state.currentPickIndex !== expectedIndex) {
+      console.log(`[DraftEngine] autoPick aborted: pick index changed from ${expectedIndex} to ${this.state.currentPickIndex} during LLM call`);
+      return { success: false, error: 'Pick was superseded by a trade.' };
+    }
+
+    this.aiGM.cancelDeliberation();
     this.clearTimer();
     const pick = this.recordPick(slot, bestRank, userId, true);
     this.state.currentPickIndex++;
@@ -329,6 +353,7 @@ export class DraftEngine extends TypedEventEmitter<DraftEventMap> {
 
     this.state.picks.push(pick);
     this.trades.invalidateTradesForPick(slot.overall);
+    this.aiGM.invalidateOffersForPick(slot.overall);
     this.emit('pick:made', { pick, slot });
 
     return pick;
@@ -341,8 +366,17 @@ export class DraftEngine extends TypedEventEmitter<DraftEventMap> {
    * Returns true if the draft completed during this advance.
    */
   private async advance(): Promise<boolean> {
+    if (this.advancing) return false;
+    this.advancing = true;
+    try { return await this.advanceInner(); } finally { this.advancing = false; }
+  }
+
+  private async advanceInner(): Promise<boolean> {
     const maxRounds = this.state.config.rounds ?? 7;
     while (true) {
+      // Stop advancing if draft was paused or is no longer active
+      if (this.state.status !== 'active') return false;
+
       const slot = this.state.schedule[this.state.currentPickIndex];
       if (this.state.currentPickIndex >= this.state.schedule.length || slot.round > maxRounds) {
         // Draft complete
@@ -355,11 +389,14 @@ export class DraftEngine extends TypedEventEmitter<DraftEventMap> {
       const userId = this.state.assignments[slot.currentTeam] ?? null;
 
       if (!userId && this.state.config.autoPick) {
-        // CPU turn — let AI GM try to trade first
+        // CPU turn — deliberation phase (~30s) then pick
         const traded = await this.aiGM.onCPUTurn(slot);
+
+        // Re-check status after async deliberation (user may have paused)
+        if (this.state.status !== 'active') return false;
+
         if (traded) {
           // Trade changed the clock — re-evaluate from the top
-          await delay(2000);
           continue;
         }
 
@@ -369,9 +406,9 @@ export class DraftEngine extends TypedEventEmitter<DraftEventMap> {
         const pick = this.recordPick(slot, bestRank, null, true);
         this.state.currentPickIndex++;
         await this.persist();
-        // Notify AI GM of the pick
         void this.aiGM.onPickMade(pick);
-        await delay(1500);
+
+        // No delay — deliberation already provides ~30s pacing
         continue;
       }
 
@@ -841,27 +878,30 @@ export class DraftEngine extends TypedEventEmitter<DraftEventMap> {
 
   // ─── Refresh Clock (after trade) ─────────────────────────────────────────
 
-  private async refreshClock(): Promise<void> {
+  /**
+   * Re-emit clock state after a trade changes the current pick's owner.
+   * Does NOT autopick or call advance() — the caller handles that via
+   * advanceIfIdle() to prevent re-entrant execution of the advance loop.
+   */
+  private refreshClock(): void {
     const slot = this.state.schedule[this.state.currentPickIndex];
     if (!slot || this.state.status !== 'active') return;
 
     const userId = this.state.assignments[slot.currentTeam] ?? null;
-
-    if (!userId && this.state.config.autoPick) {
-      const bestRank = await this.getBestPickForTeam(slot.currentTeam);
-      if (bestRank === undefined) return;
-      this.recordPick(slot, bestRank, null, true);
-      this.state.currentPickIndex++;
-      await this.persist();
-      await delay(1500);
-      await this.advance();
-      return;
-    }
 
     this.emit('pick:clock', { slot, teamAbbr: slot.currentTeam });
 
     if (this.state.config.timerSeconds && userId) {
       this.startTimer();
     }
+  }
+
+  /**
+   * Trigger advance() only if not already inside an advance loop.
+   * Called after trades that change the current pick's owner.
+   */
+  private async advanceIfIdle(): Promise<void> {
+    if (this.advancing) return;
+    await this.advance();
   }
 }
