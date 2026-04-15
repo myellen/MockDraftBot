@@ -35,13 +35,25 @@
 
 /* Mobile: stacked */
 @media (max-width: 767px) {
+  .draft-room {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
   .draft-room-body {
     grid-template-columns: 1fr;
-    grid-template-rows: auto 1fr auto;
-    overflow-y: auto;
+    grid-template-rows: auto auto auto;
+    overflow-y: visible;
   }
   .draft-room-body > * {
     max-height: none;
     overflow-y: visible;
+  }
+  .draft-room-body > .command-center { order: 1; }
+  .draft-room-body > .draft-board { order: 2; max-height: 70vh; overflow-y: auto; }
+  .draft-room-body > .feed-panel {
+    order: 3;
+    grid-column: 1;
+    max-height: none;
   }
 }

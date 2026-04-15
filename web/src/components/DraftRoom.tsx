@@ -86,6 +86,9 @@ export function DraftRoom({ roomCode, token, isAdmin, onLeave }: DraftRoomProps)
         addFeedItem('round-change', { round: 1 });
         lastRoundRef.current = 1;
       }),
+      ws.on('draft:paused', () => {}),
+      ws.on('draft:resumed', () => {}),
+      ws.on('draft:complete', () => {}),
       ws.on('draft:reset', () => {
         setFeedItems([]);
         setCpuOffers([]);
@@ -94,12 +97,14 @@ export function DraftRoom({ roomCode, token, isAdmin, onLeave }: DraftRoomProps)
       ws.on('trade:executed', (data: { trade: PendingTrade }) => {
         addFeedItem('trade-executed', data.trade);
         setTradeResults(prev => [{ trade: data.trade, accepted: true }, ...prev]);
+        api.getState(roomCode).then(d => setState(d.state));
       }),
       ws.on('trade:cancelled', (data: { trade: PendingTrade; reason: string; reasoning?: string }) => {
         addFeedItem('trade-cancelled', data);
         if (data.reasoning) {
           setTradeResults(prev => [{ trade: data.trade, accepted: false, reasoning: data.reasoning }, ...prev]);
         }
+        api.getState(roomCode).then(d => setState(d.state));
       }),
       ws.on('trade:chatter', (data) => {
         addFeedItem('trade-chatter', data);
@@ -107,12 +112,14 @@ export function DraftRoom({ roomCode, token, isAdmin, onLeave }: DraftRoomProps)
       ws.on('cpu-offer:sent', (data) => {
         setCpuOffers(prev => [data.offer as CPUOffer, ...prev]);
         addFeedItem('cpu-offer', data.offer);
+        api.getState(roomCode).then(d => setState(d.state));
       }),
       ws.on('cpu-offer:resolved', (data) => {
         const resolved = data as { offerId?: string };
         if (resolved.offerId) {
           setCpuOffers(prev => prev.filter(o => o.id !== resolved.offerId));
         }
+        api.getState(roomCode).then(d => setState(d.state));
       }),
       ws.on('insider:tweet', (data: InsiderTweet) => {
         addFeedItem('insider-tweet', data);

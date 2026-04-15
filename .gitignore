@@ -15,3 +15,4 @@ src/data/NFL Draft Picks/
 scripts/trade-machine-*.json
 !scripts/trade-machine-*.example.json
 docs/
+web/dist/

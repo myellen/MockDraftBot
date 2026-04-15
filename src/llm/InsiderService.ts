@@ -125,7 +125,7 @@ export async function generateInsiderTweet(engine: DraftEngine, signal?: AbortSi
       return lastCtx.leakerPrompt;
     },
     'Analyze the draft activity and extract the most interesting nuggets.',
-    { temperature: 1.2, signal },
+    { temperature: 1.2, signal, priority: 'low' },
   );
 
   const ctx = lastCtx ?? gatherDraftContext(engine);
@@ -148,7 +148,7 @@ export async function generateInsiderTweet(engine: DraftEngine, signal?: AbortSi
     reporterInput = `Write a tweet based on this intel: ${fallbackContext}`;
   }
 
-  let tweet = await chatText(reporterPrompt, reporterInput, { temperature: 1.2, signal });
+  let tweet = await chatText(reporterPrompt, reporterInput, { temperature: 1.2, signal, priority: 'low' });
   tweet = tweet.replace(/^["'\u201C\u201D\u2018\u2019]|["'\u201C\u201D\u2018\u2019]$/g, '').trim();
   if (tweet.length > 280) tweet = tweet.slice(0, 277) + '...';
 

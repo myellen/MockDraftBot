@@ -16,9 +16,12 @@ export interface OllamaConfig {
  */
 export type PromptSource = string | (() => string);
 
+export type LLMPriority = 'high' | 'low';
+
 export interface ChatOptions {
   temperature?: number;
   signal?: AbortSignal;
+  priority?: LLMPriority;
 }
 
 export class LLMAbortError extends Error {
@@ -121,32 +124,35 @@ const MAX_CONCURRENT = parseInt(process.env.OLLAMA_MAX_CONCURRENT ?? '1', 10);
 const STALE_THRESHOLD_MS = 10_000; // warn when queue wait exceeds this
 let activeRequests = 0;
 let requestCounter = 0;
-const waitQueue: Array<() => void> = [];
+const highQueue: Array<() => void> = [];
+const lowQueue: Array<() => void> = [];
 
-function acquire(): Promise<void> {
+function acquire(priority: LLMPriority = 'high'): Promise<void> {
   if (activeRequests < MAX_CONCURRENT) {
     activeRequests++;
     return Promise.resolve();
   }
-  return new Promise<void>(resolve => waitQueue.push(resolve));
+  const queue = priority === 'high' ? highQueue : lowQueue;
+  return new Promise<void>(resolve => queue.push(resolve));
 }
 
 function release(): void {
-  const next = waitQueue.shift();
+  const next = highQueue.shift() ?? lowQueue.shift();
   if (next) {
-    next(); // hand the slot to the next waiter
+    next(); // hand the slot to the next waiter (high priority first)
   } else {
     activeRequests--;
   }
 }
 
-async function withSlot<T>(label: string, signal: AbortSignal | undefined, fn: () => Promise<T>): Promise<T> {
+async function withSlot<T>(label: string, signal: AbortSignal | undefined, fn: () => Promise<T>, priority: LLMPriority = 'high'): Promise<T> {
   const id = ++requestCounter;
   const enqueueTime = Date.now();
-  const depth = waitQueue.length;
-  console.log(`[LLM] #${id} QUEUED ${label} (depth: ${depth})`);
+  const depth = highQueue.length + lowQueue.length;
+  const tag = priority === 'low' ? ' [low]' : '';
+  console.log(`[LLM] #${id} QUEUED ${label}${tag} (depth: ${depth})`);
 
-  await acquire();
+  await acquire(priority);
 
   // Check abort before executing — skip the model call if caller already timed out
   if (signal?.aborted) {
@@ -179,8 +185,8 @@ async function withSlot<T>(label: string, signal: AbortSignal | undefined, fn: (
 }
 
 /** Current queue depth for monitoring. */
-export function getQueueStats(): { active: number; queued: number } {
-  return { active: activeRequests, queued: waitQueue.length };
+export function getQueueStats(): { active: number; queued: number; queuedLow: number } {
+  return { active: activeRequests, queued: highQueue.length, queuedLow: lowQueue.length };
 }
 
 /**
@@ -217,8 +223,8 @@ export async function chatJSON<T>(
   userMessage: PromptSource,
   options?: ChatOptions | number,
 ): Promise<T> {
-  const { temperature = 0.3, signal } = typeof options === 'number'
-    ? { temperature: options, signal: undefined }
+  const { temperature = 0.3, signal, priority } = typeof options === 'number'
+    ? { temperature: options, signal: undefined, priority: undefined }
     : (options ?? {});
   return withSlot('chatJSON', signal, async () => {
     const system = resolvePrompt(systemPrompt);
@@ -247,7 +253,7 @@ export async function chatJSON<T>(
     });
 
     return parseJSON<T>(response.message.content);
-  });
+  }, priority);
 }
 
 /**
@@ -260,7 +266,7 @@ export async function chatJSONWithHistory<T>(
   userMessage: PromptSource,
   options?: ChatOptions,
 ): Promise<T> {
-  const { temperature = 0.3, signal } = options ?? {};
+  const { temperature = 0.3, signal, priority } = options ?? {};
   return withSlot('chatJSONWithHistory', signal, async () => {
     const system = resolvePrompt(systemPrompt);
     const user = resolvePrompt(userMessage);
@@ -292,7 +298,7 @@ export async function chatJSONWithHistory<T>(
     });
 
     return parseJSON<T>(response.message.content);
-  });
+  }, priority);
 }
 
 /**
@@ -303,8 +309,8 @@ export async function chatText(
   userMessage: PromptSource,
   options?: ChatOptions | number,
 ): Promise<string> {
-  const { temperature = 0.3, signal } = typeof options === 'number'
-    ? { temperature: options, signal: undefined }
+  const { temperature = 0.3, signal, priority } = typeof options === 'number'
+    ? { temperature: options, signal: undefined, priority: undefined }
     : (options ?? {});
   return withSlot('chatText', signal, async () => {
     const system = resolvePrompt(systemPrompt);
@@ -331,5 +337,5 @@ export async function chatText(
     });
 
     return response.message.content.trim();
-  });
+  }, priority);
 }
