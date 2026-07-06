@@ -131,7 +131,7 @@ export function isTradeReasonable(
   requestedOveralls: number[],
   offeredFuture: Array<{ year: number; round: number }> = [],
   requestedFuture: Array<{ year: number; round: number }> = [],
-  maxRatio = 2.5,
+  maxRatio = 1.8,
 ): boolean {
   let offeredValue = 0;
   for (const o of offeredOveralls) offeredValue += getPickValue(o, 'standard');

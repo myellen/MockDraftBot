@@ -33,7 +33,7 @@ async function apiFetch<T>(path: string, opts: RequestInit = {}): Promise<T> {
   if (token) headers['Authorization'] = `Bearer ${token}`;
   const res = await fetch(path, { ...opts, headers });
   const data = await res.json();
-  if (!res.ok && !data.success) throw new Error(data.error ?? `HTTP ${res.status}`);
+  if (!res.ok || data.success === false) throw new Error(data.error ?? `HTTP ${res.status}`);
   return data as T;
 }
 
@@ -53,7 +53,7 @@ export function joinRoom(code: string, displayName: string) {
 // ─── Draft state ─────────────────────────────────────────────────────────────
 
 export function getState(code: string) {
-  return apiFetch<{ state: any; teams: any }>(`/api/rooms/${code}/state`);
+  return apiFetch<{ state: any; teams: any; mode?: 'college' | 'redraft' }>(`/api/rooms/${code}/state`);
 }
 
 // ─── Draft commands ──────────────────────────────────────────────────────────
@@ -205,6 +205,10 @@ export function triggerRumor(code: string) {
 
 export function getInsiders(code: string) {
   return apiFetch<{ insiders: Array<{ name: string; handle: string; avatar: string }> }>(`/api/rooms/${code}/insiders`);
+}
+
+export function getLLMQueue() {
+  return apiFetch<{ active: number; queued: number; queuedLow: number }>('/api/rooms/llm-queue');
 }
 
 export function submitLeak(code: string, info: string, insiderName?: string) {

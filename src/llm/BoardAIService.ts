@@ -7,6 +7,7 @@ import { chatJSON, chatText } from './OllamaService';
 import {
   lookupProspect, lookupProspectLight, lookupByPositionRank,
   searchByPosition, getTopProspects, queryProspects, ragSearch,
+  isAvailable as isScoutingAvailable,
 } from '../data/beastScouting';
 import type { ProspectQuery } from '../data/beastScouting';
 
@@ -282,6 +283,9 @@ export async function fetchScoutingData(needs: DataNeeds, boardNames: string[]):
  * LLM calls: 1 (extraction) + 1 (analysis) = 2 total.
  */
 export async function gmResearch(ctx: GMResearchContext): Promise<string> {
+  // No scouting corpus loaded (e.g. redraft mode) — skip the whole pipeline
+  // instead of spending an extraction LLM call that can't fetch anything.
+  if (!isScoutingAvailable()) return '';
   const boardList = ctx.boardTopAvailable
     .map((p, i) => `${i + 1}. ${p.name} (${p.pos}, ${p.school})`)
     .join('\n');

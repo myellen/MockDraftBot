@@ -1,3 +1,4 @@
+import { DRAFT_MODE } from '../data/draftMode';
 import {
   DraftState, PendingTrade, CancelledTrade, TeamCapInfo, TradeCancelReason,
 } from './types';
@@ -161,7 +162,9 @@ export class TradeEngine {
    * Compute a team's current salary cap situation.
    */
   getTeamCapInfo(teamAbbr: string): TeamCapInfo {
-    const baseline = TEAM_CAP[teamAbbr];
+    // Redraft: TEAM_CAP describes the real-life rosters, which don't exist in
+    // this universe — zeros hide every cap surface (UI gates on non-zero).
+    const baseline = DRAFT_MODE === 'redraft' ? undefined : TEAM_CAP[teamAbbr];
     if (!baseline) {
       return { capUsed: 0, capSpace: 0, deadMoney: 0, projectedRookieCap: 0, effectiveCapSpace: 0 };
     }

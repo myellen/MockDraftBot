@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { schoolLabel } from '../mode';
 import * as api from '../api';
 import type { DraftState, Team, Prospect } from '../types';
 
@@ -38,7 +39,7 @@ export function BoardManager({ roomCode, state, teams, userId, boardVersion }: B
 
   const loadBoard = useCallback(() => {
     if (!myTeam) return;
-    api.getMyBoard(roomCode, 1, 200).then(d => {
+    api.getMyBoard(roomCode, 1, 500).then(d => {
       setEntries(d.entries);
       setTotal(d.total);
       setStrategy(d.strategy);
@@ -48,6 +49,13 @@ export function BoardManager({ roomCode, state, teams, userId, boardVersion }: B
   }, [roomCode, myTeam]);
 
   useEffect(() => { loadBoard(); }, [loadBoard, boardVersion]);
+
+  // Pre-fill paste list with effective board when switching to text tab
+  useEffect(() => {
+    if (tab === 'text' && !textInput && entries.length > 0) {
+      setTextInput(entries.map((e, i) => `${i + 1}. ${e.name} (${e.pos})`).join('\n'));
+    }
+  }, [tab, entries]);
 
   const handleMoveUp = async (idx: number) => {
     if (idx <= 0) return;
@@ -201,7 +209,7 @@ export function BoardManager({ roomCode, state, teams, userId, boardVersion }: B
           </div>
           <table className="prospect-table">
             <thead>
-              <tr><th>Rk</th><th>Name</th><th>Pos</th><th>School</th><th></th></tr>
+              <tr><th>Rk</th><th>Name</th><th>Pos</th><th>{schoolLabel()}</th><th></th></tr>
             </thead>
             <tbody>
               {searchResults.map((p: Prospect) => {

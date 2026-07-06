@@ -4,7 +4,8 @@ export interface RosterPlayer {
   number: string | null;
 }
 
-// Replace with current NFL rosters (can be generated via scripts/generate-rosters.ts using ESPN API)
+// Copy to rosters.college.ts and replace with current NFL rosters
+// (can be generated via scripts/generate-rosters.ts using ESPN API)
 export const ROSTERS: Record<string, RosterPlayer[]> = {
   LV: [
     { name: "Aidan O'Connell", pos: "QB", number: "12" },

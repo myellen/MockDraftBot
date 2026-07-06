@@ -9,6 +9,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { Tool } from 'ollama';
 import { search as ragSearchIndex, isReady as isRagReady } from '../llm/EmbeddingService';
+import { DRAFT_MODE } from './draftMode';
 
 interface CompactMeasurements {
   ht?: string;
@@ -47,7 +48,15 @@ let prospects: CompactProspect[] | null = null;
 
 function load(): CompactProspect[] {
   if (prospects) return prospects;
-  const filePath = path.join(__dirname, '..', '..', 'data', 'beast-scouting-compact.json');
+  // Scouting data is dataset-specific: the Beast guide covers college prospects
+  // only. In redraft mode we load a redraft corpus if one exists; a missing file
+  // cleanly disables the whole scouting/RAG layer (every consumer guards) —
+  // critically, it also prevents fuzzy name matches from attaching college
+  // scouting reports to same-named NFL veterans.
+  const fileName = DRAFT_MODE === 'redraft'
+    ? 'redraft-scouting-compact.json'
+    : 'beast-scouting-compact.json';
+  const filePath = path.join(__dirname, '..', '..', 'data', fileName);
   if (!fs.existsSync(filePath)) {
     console.warn('[BeastScouting] No scouting data found at', filePath);
     prospects = [];

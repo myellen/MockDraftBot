@@ -1,5 +1,5 @@
 // NFL Draft — Complete pick order
-// Source your draft order from ESPN, NFL.com, Tankathon, etc.
+// Copy to draftOrder.college.ts. Source your draft order from ESPN, NFL.com, Tankathon, etc.
 // currentTeam = team currently holding the pick after all known trades
 
 export interface DraftPickEntry {

@@ -187,6 +187,6 @@ ${teamEntries.join(',\n')},
 };
 `;
 
-const outPath = path.join(__dirname, '..', 'src', 'data', 'gmBoards.ts');
+const outPath = path.join(__dirname, '..', 'src', 'data', 'gmBoards.college.ts');
 fs.writeFileSync(outPath, output);
 console.log(`\nWrote ${Object.keys(boards).length} boards to ${outPath}`);

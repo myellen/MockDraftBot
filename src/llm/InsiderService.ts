@@ -5,6 +5,7 @@
  */
 
 import { TEAMS } from '../data/teams';
+import { DRAFT_MODE } from '../data/draftMode';
 import { isOllamaConfigured, chatJSON, chatText, LLMAbortError } from './OllamaService';
 import type { DraftEngine } from '../engine/DraftEngine';
 import { INSIDERS, buildLeakerPrompt, buildReporterPrompt } from './insiderData';
@@ -160,53 +161,77 @@ export async function generateInsiderTweet(engine: DraftEngine, signal?: AbortSi
   };
 }
 
-// ── InsiderQueue — processes pick/trade events into insider tweets ──────────
+// ── InsiderQueue — deterministic pick/trade color commentary ────────────────
+// No LLM calls. Templates produce Draft Tracker / League Sources / NFL Draft Wire tweets.
 
-const QUEUE_MIN_GAP_MS = 5000;
-const QUEUE_MAX_DEPTH = 10;
-const INSIDER_TIMEOUT_MS = 20_000;
+const QUEUE_MIN_GAP_MS = 4000;
+const QUEUE_MAX_DEPTH = 15;
+
+interface FeedPersona { name: string; handle: string; }
+const FEED_PERSONAS: FeedPersona[] = [
+  { name: 'NFL Draft Wire', handle: '@NFLDraftWire' },
+  { name: 'Draft Tracker', handle: '@DraftTracker' },
+  { name: 'League Sources', handle: '@LeagueSources' },
+];
+
+function pick<T>(arr: T[]): T { return arr[Math.floor(Math.random() * arr.length)]; }
+
+function pickTweet(teamName: string, prospectName: string, pos: string, school: string, round: number, overall: number): string {
+  // In redraft mode `school` is the player's (former) NFL team — "out of
+  // Kansas City Chiefs" reads wrong, "formerly of the Chiefs" doesn't.
+  const redraft = DRAFT_MODE === 'redraft';
+  const outOf = redraft ? `formerly of the ${school}` : `out of ${school}`;
+  const fromSchool = redraft ? `the ${school}` : school;
+  const schoolPos = redraft ? `former ${school} ${pos}` : `${school} ${pos}`;
+  const templates = [
+    `${teamName} locks in ${prospectName} (${pos}, ${school}) at #${overall}. ${round <= 2 ? 'Big-time selection.' : 'Solid value here.'}`,
+    `Pick #${overall}: ${prospectName} heads to ${teamName}. The ${pos} ${outOf} fills a need.`,
+    `${teamName} adds ${prospectName} from ${fromSchool}. Front office was clearly targeting ${pos} in round ${round}.`,
+    `${prospectName} (${pos}) goes #${overall} to ${teamName}. Draft room is feeling good about this one.`,
+    `The ${pos} from ${fromSchool}, ${prospectName}, is heading to ${teamName} at pick ${overall}.`,
+  ];
+  if (round === 1) {
+    templates.push(
+      `First-round talent secured: ${teamName} takes ${prospectName} at #${overall}. The ${schoolPos} was high on a lot of boards.`,
+      `Round 1 pick locked in — ${teamName} goes with ${prospectName} ${outOf}. A statement pick.`,
+    );
+  }
+  if (round >= 4) {
+    templates.push(
+      `Day 3 find: ${teamName} grabs ${prospectName} (${pos}, ${school}) at #${overall}. Could be a steal.`,
+      `${teamName} adds depth with ${prospectName} ${outOf}. Smart pick in round ${round}.`,
+    );
+  }
+  return pick(templates);
+}
+
+function tradeTweet(team1: string, team2: string): string {
+  const templates = [
+    `Trade is official — ${team1} and ${team2} swap assets. Both front offices worked fast to get this done.`,
+    `${team1} and ${team2} finalize a deal. The phones were ringing for a while on this one.`,
+    `Confirmed: ${team1} and ${team2} complete a trade. Draft boards shifting across the league.`,
+    `${team1} ↔ ${team2} — the trade is done. Sources say both sides feel good about the return.`,
+    `Deal done between ${team1} and ${team2}. This draft keeps delivering surprises.`,
+  ];
+  return pick(templates);
+}
 
 export class InsiderQueue {
-  private queue: Array<{ engine: DraftEngine; priority: boolean }> = [];
+  private queue: Array<{ engine: DraftEngine; isTrade: boolean }> = [];
   private processing = false;
   private stopped = false;
 
-  enqueue(engine: DraftEngine, priority = false): void {
+  enqueue(engine: DraftEngine, isTrade = false): void {
     if (this.stopped) return;
-
-    // If queue is too deep, consolidate oldest non-priority items
     if (this.queue.length >= QUEUE_MAX_DEPTH) {
-      // Keep priority items and the most recent half
-      const priorityItems = this.queue.filter(q => q.priority);
-      const normalItems = this.queue.filter(q => !q.priority);
-      const keepNormal = normalItems.slice(-Math.floor(QUEUE_MAX_DEPTH / 2));
-      this.queue = [...priorityItems, ...keepNormal];
+      this.queue.splice(0, this.queue.length - Math.floor(QUEUE_MAX_DEPTH / 2));
     }
-
-    if (priority) {
-      // Trade events go to front (after other priority items)
-      let lastPriority = -1;
-      for (let i = this.queue.length - 1; i >= 0; i--) {
-        if (this.queue[i].priority) { lastPriority = i; break; }
-      }
-      this.queue.splice(lastPriority + 1, 0, { engine, priority: true });
-    } else {
-      this.queue.push({ engine, priority: false });
-    }
-
-    if (!this.processing) {
-      void this.processQueue();
-    }
+    this.queue.push({ engine, isTrade });
+    if (!this.processing) void this.processQueue();
   }
 
-  stop(): void {
-    this.stopped = true;
-    this.queue = [];
-  }
-
-  start(): void {
-    this.stopped = false;
-  }
+  stop(): void { this.stopped = true; this.queue = []; }
+  start(): void { this.stopped = false; }
 
   private async processQueue(): Promise<void> {
     if (this.processing) return;
@@ -214,23 +239,30 @@ export class InsiderQueue {
 
     while (this.queue.length > 0 && !this.stopped) {
       const item = this.queue.shift()!;
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), INSIDER_TIMEOUT_MS);
-      try {
-        const result = await generateInsiderTweet(item.engine, controller.signal);
-        item.engine.emit('insider:tweet', result);
-        console.log(`[InsiderQueue] Tweet by ${result.name}: ${result.tweet.slice(0, 80)}...`);
-      } catch (err) {
-        if (err instanceof LLMAbortError) {
-          console.warn('[InsiderQueue] Tweet generation aborted (timeout)');
-        } else {
-          console.error('[InsiderQueue] Failed to generate tweet:', err instanceof Error ? err.message : err);
-        }
-      } finally {
-        clearTimeout(timer);
+      const persona = pick(FEED_PERSONAS);
+      const state = item.engine.getState();
+
+      let tweet: string;
+      if (item.isTrade) {
+        const t = (state.tradeHistory ?? []).at(-1);
+        const t1 = TEAMS[t?.proposerTeam ?? '']?.name ?? t?.proposerTeam ?? '???';
+        const t2 = TEAMS[t?.receiverTeam ?? '']?.name ?? t?.receiverTeam ?? '???';
+        tweet = tradeTweet(t1, t2);
+      } else {
+        const p = state.picks?.at(-1);
+        if (!p) { continue; }
+        const teamName = TEAMS[p.team]?.name ?? p.team;
+        tweet = pickTweet(teamName, p.prospectName, p.pos, p.school, p.round, p.overall);
       }
 
-      // Minimum gap between tweets
+      item.engine.emit('insider:tweet', {
+        name: persona.name,
+        handle: persona.handle,
+        avatar: '',
+        tweet,
+      });
+      console.log(`[InsiderQueue] ${persona.name}: ${tweet.slice(0, 80)}...`);
+
       if (this.queue.length > 0) {
         await new Promise(r => setTimeout(r, QUEUE_MIN_GAP_MS));
       }

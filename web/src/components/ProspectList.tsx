@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { schoolLabel } from '../mode';
 import * as api from '../api';
 import type { Prospect } from '../types';
 
@@ -54,7 +55,7 @@ export function ProspectList({ roomCode, onSelect, selectedRank }: ProspectListP
             <th>#</th>
             <th>Name</th>
             <th>Pos</th>
-            <th>School</th>
+            <th>{schoolLabel()}</th>
             <th></th>
           </tr>
         </thead>

@@ -8,6 +8,7 @@ import { DraftManager } from '../discord/DraftManager';
 import { TEAMS } from '../data/teams';
 import { ALL_POSITIONS } from '../data/prospects';
 import { TEAM_DRAFT_INTEL, DRAFT_KNOWLEDGE_BLOCK } from '../data/boardSystemPrompt';
+import { DRAFT_MODE } from '../data/draftMode';
 import { isOllamaConfigured, chatJSONWithHistory } from '../llm/OllamaService';
 import { buildMyBoardEmbed } from '../utils/embeds';
 import { ConversationHistory, type ConversationEntry } from '../utils/conversationHistory';
@@ -77,6 +78,12 @@ interface BoardAIResponse {
 // ── In-memory conversation history per user (resets on restart) ──
 const conversations = new ConversationHistory(10); // keep last 5 exchanges
 
+// College mode: Beast scouting data outranks the pool list. Redraft mode has no
+// scouting corpus, and the pool IDs ARE the value ordering — say so explicitly.
+const SCOUTING_AUTHORITY_RULE = DRAFT_MODE === 'redraft'
+  ? `- **Redraft mode:** the pool IDs in the "Available Prospects" list ARE the consensus redraft value ranking (lower ID = better player). There is no college scouting data — every player in the pool is a current NFL veteran whose "school" is his current NFL team.`
+  : `- **Scouting data from Dane Brugler's "The Beast" 2026 NFL Draft Guide may be appended to the user's message.** When present, ALWAYS prefer Beast data over the prospect pool list above. The Beast grades, position ranks (e.g. "EDGE5"), and overall ranks ("OVR #42") are authoritative — they come from the NFL's most respected draft analyst. The pool IDs in the "Available Prospects" list are NOT rankings. When citing a prospect's rank, use the Beast's position rank and overall rank, NOT the pool number.`;
+
 /**
  * Build a full context snapshot for the LLM board agent.
  * Stateless agent — everything it needs is in this prompt.
@@ -131,7 +138,9 @@ These picks have already been made for this team in the current draft:
 ${draftedStr}
 
 ## Available Prospects
-These are the prospects still available to be drafted. The "#" is just a pool ID for name matching — it is NOT a quality ranking. Do NOT cite these numbers as prospect rankings.
+${DRAFT_MODE === 'redraft'
+    ? 'These are the players still available to be drafted. The "#" IS the consensus redraft value ranking (lower = better player).'
+    : 'These are the prospects still available to be drafted. The "#" is just a pool ID for name matching — it is NOT a quality ranking. Do NOT cite these numbers as prospect rankings.'}
 ${prospectsStr}
 
 ## Current Custom Board
@@ -198,7 +207,7 @@ Name Here         | 2nd Rd  | 4.46 | 35"  | 10'09" | 4.21 | 6.89 | 22  | 32 1/2 
 \`\`\`
 - **Scouting highlights:** When results come from a trait/scouting search, include a "Scouting Highlights" section with bullet points explaining WHY each prospect matched the trait query. Cite Brugler's specific language (e.g. "noted for outstanding suddenness", "violent feet at the top of routes").
 - If the user seems to be asking a question AND implying a board change, answer the question and note they can follow up to apply changes.
-- **Scouting data from Dane Brugler's "The Beast" 2026 NFL Draft Guide may be appended to the user's message.** When present, ALWAYS prefer Beast data over the prospect pool list above. The Beast grades, position ranks (e.g. "EDGE5"), and overall ranks ("OVR #42") are authoritative — they come from the NFL's most respected draft analyst. The pool IDs in the "Available Prospects" list are NOT rankings. When citing a prospect's rank, use the Beast's position rank and overall rank, NOT the pool number.
+${SCOUTING_AUTHORITY_RULE}
 - Reference specific Beast scouting insights: cite Brugler's grade (e.g. "2nd round grade"), strengths, weaknesses, and player comparisons.
 - **Measurements:** Beast data includes labeled combine and pro day measurements (forty, vert, broad, shuttle, cone, bench, arm, hand, wing). Null values mean the prospect did not participate in that drill — show "---" in tables.
 

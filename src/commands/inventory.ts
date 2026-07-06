@@ -1,3 +1,4 @@
+import { DRAFT_MODE } from '../data/draftMode';
 import {
   SlashCommandBuilder,
   ChatInputCommandInteraction,
@@ -81,7 +82,7 @@ export async function execute(
   if (!futureText) futureText = '_None_';
 
   // ── Salary Cap ─────────────────────────────────────────────────────────────
-  const hasSalaryData = Object.keys(TEAM_CAP).length > 0;
+  const hasSalaryData = DRAFT_MODE !== 'redraft' && Object.keys(TEAM_CAP).length > 0;
   let capText = '';
   if (hasSalaryData) {
     const capInfo = manager.trades.getTeamCapInfo(teamAbbr);

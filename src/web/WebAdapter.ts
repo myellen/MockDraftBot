@@ -11,18 +11,27 @@ import {
   DraftState, DraftConfig, CancelledTrade, PendingTrade,
   FuturePickRight, BoardData,
 } from '../engine/types';
-import { DraftEngine, DEFAULT_STATE, DEFAULT_BOARD_DATA, buildFuturePickRights } from '../engine/DraftEngine';
+import { DraftEngine, freshDefaultState, freshDefaultBoardData, buildFuturePickRights } from '../engine/DraftEngine';
+import { DRAFT_MODE } from '../data/draftMode';
 import type { PersistenceProvider, TimerProvider } from '../engine/interfaces';
 import { InsiderQueue } from '../llm/InsiderService';
 
 // ─── File paths (prefixed with web- to avoid collisions with Discord state) ──
+// Redraft mode gets its own file namespace so an env-var flip can never
+// overwrite the other mode's saves — each mode's rooms coexist on disk and
+// resume when you switch back.
+
+const FILE_TAG = DRAFT_MODE === 'redraft' ? 'redraft' : 'draft';
+
+/** Filename prefix for this mode's room state files (used by RoomManager). */
+export const WEB_STATE_PREFIX = `web-${FILE_TAG}-state-`;
 
 function statePath(roomCode: string): string {
-  return path.join(__dirname, `../../data/web-draft-state-${roomCode}.json`);
+  return path.join(__dirname, `../../data/${WEB_STATE_PREFIX}${roomCode}.json`);
 }
 
 function boardPath(roomCode: string): string {
-  return path.join(__dirname, `../../data/web-draft-boards-${roomCode}.json`);
+  return path.join(__dirname, `../../data/web-${FILE_TAG}-boards-${roomCode}.json`);
 }
 
 // ─── WebAdapter ──────────────────────────────────────────────────────────────
@@ -48,8 +57,8 @@ export class WebAdapter implements PersistenceProvider, TimerProvider {
     (adapter as any).timerCounter = 0;
     (adapter as any).insiderQueue = new InsiderQueue();
 
-    const state = (await adapter.loadState(roomCode)) ?? { ...DEFAULT_STATE };
-    const boardData = (await adapter.loadBoards(roomCode)) ?? { ...DEFAULT_BOARD_DATA };
+    const state = (await adapter.loadState(roomCode)) ?? freshDefaultState();
+    const boardData = (await adapter.loadBoards(roomCode)) ?? freshDefaultBoardData();
     (adapter as any).engine = new DraftEngine(roomCode, state, boardData, adapter, adapter);
     adapter.bindEvents();
     return adapter;
@@ -62,6 +71,10 @@ export class WebAdapter implements PersistenceProvider, TimerProvider {
       const raw = await fs.readFile(statePath(id), 'utf-8');
       const parsed = JSON.parse(raw) as DraftState;
       if (parsed.schemaVersion !== 1) return null;
+      if ((parsed.dataset ?? 'college') !== DRAFT_MODE) {
+        console.warn(`[${id}] Saved room state belongs to dataset "${parsed.dataset ?? 'college'}" but server is running "${DRAFT_MODE}" — starting fresh (rank IDs are dataset-relative)`);
+        return null;
+      }
       const r = parsed as unknown as Record<string, unknown>;
       const state: DraftState = {
         ...parsed,
@@ -110,7 +123,12 @@ export class WebAdapter implements PersistenceProvider, TimerProvider {
     try {
       const raw = await fs.readFile(boardPath(id), 'utf-8');
       const parsed = JSON.parse(raw) as BoardData;
+      if ((parsed.dataset ?? 'college') !== DRAFT_MODE) {
+        console.warn(`[${id}] Saved boards belong to dataset "${parsed.dataset ?? 'college'}" but server is running "${DRAFT_MODE}" — starting fresh`);
+        return null;
+      }
       return {
+        dataset: DRAFT_MODE,
         customBoards: parsed.customBoards ?? {},
         strategyNotes: parsed.strategyNotes ?? {},
         strategyPrompts: (parsed as any).strategyPrompts ?? {},
@@ -122,7 +140,7 @@ export class WebAdapter implements PersistenceProvider, TimerProvider {
 
   async saveBoards(id: string, boards: BoardData): Promise<void> {
     const p = boardPath(id);
-    const tmp = p + '.tmp';
+    const tmp = p + `.tmp.${Date.now()}.${Math.random().toString(36).slice(2, 6)}`;
     await fs.mkdir(path.dirname(p), { recursive: true });
     await fs.writeFile(tmp, JSON.stringify(boards, null, 2), 'utf-8');
     await fs.rename(tmp, p);

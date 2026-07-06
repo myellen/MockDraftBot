@@ -3,6 +3,7 @@ import {
   AutocompleteInteraction, ChannelType, EmbedBuilder
 } from 'discord.js';
 import { DraftManager } from '../discord/DraftManager';
+import { DEFAULT_STATE } from '../engine/DraftEngine';
 import { TEAMS } from '../data/teams';
 import { isAdmin } from '../utils/permissions';
 import { buildAssignmentsEmbed } from '../utils/embeds';
@@ -277,7 +278,9 @@ export async function execute(
     const timer = interaction.options.getInteger('timer') ?? null;
     const autopick = interaction.options.getBoolean('autopick') ?? true;
     const rounds = interaction.options.getInteger('rounds') ?? 7;
-    const allowPlayerTrades = interaction.options.getBoolean('allow-player-trades') ?? true;
+    // Default from the mode-aware engine default, not a literal — redraft
+    // disables player trades (the pool and the rosters are the same players)
+    const allowPlayerTrades = interaction.options.getBoolean('allow-player-trades') ?? DEFAULT_STATE.config.allowPlayerTrades;
     const tradeAnnouncement = (interaction.options.getString('trade-announcement') ?? 'intrigue') as TradeAnnouncement;
     const enforceSalaryCap = interaction.options.getBoolean('enforce-salary-cap') ?? false;
     const cpuTrading = interaction.options.getBoolean('cpu-trading') ?? false;

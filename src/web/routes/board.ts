@@ -14,7 +14,7 @@ export function boardRoutes(rm: RoomManager): Router {
     if (!teamAbbr) { res.json({ entries: [], total: 0, totalPages: 0, page: 1, strategy: null }); return; }
 
     const page = parseInt(req.query.page as string) || 1;
-    const pageSize = Math.min(parseInt(req.query.pageSize as string) || 50, 100);
+    const pageSize = Math.min(parseInt(req.query.pageSize as string) || 500, 500);
     const result = room.adapter.engine.getMyBoardPage(teamAbbr, page, pageSize);
     const strategy = room.adapter.engine.getStrategyPrompt(teamAbbr) ?? null;
     const notes = room.adapter.engine.getStrategyNotes(teamAbbr);

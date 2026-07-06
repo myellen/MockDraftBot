@@ -2,7 +2,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import type WebSocket from 'ws';
-import { WebAdapter } from './WebAdapter';
+import { WebAdapter, WEB_STATE_PREFIX } from './WebAdapter';
 import { sign, type TokenPayload } from './auth';
 
 interface Room {
@@ -23,8 +23,8 @@ export class RoomManager {
     try {
       const files = await fs.readdir(DATA_DIR);
       const codes = files
-        .filter(f => f.startsWith('web-draft-state-') && f.endsWith('.json'))
-        .map(f => f.slice('web-draft-state-'.length, -'.json'.length));
+        .filter(f => f.startsWith(WEB_STATE_PREFIX) && f.endsWith('.json'))
+        .map(f => f.slice(WEB_STATE_PREFIX.length, -'.json'.length));
 
       for (const code of codes) {
         try {

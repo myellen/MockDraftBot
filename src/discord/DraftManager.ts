@@ -5,7 +5,8 @@ import {
   DraftState, DraftConfig, CancelledTrade, PendingTrade,
   FuturePickRight, BoardData, CompletedPick,
 } from '../engine/types';
-import { DraftEngine, DEFAULT_STATE, DEFAULT_BOARD_DATA, buildFuturePickRights } from '../engine/DraftEngine';
+import { DraftEngine, freshDefaultState, freshDefaultBoardData, buildFuturePickRights } from '../engine/DraftEngine';
+import { DRAFT_MODE } from '../data/draftMode';
 import type { PersistenceProvider, TimerProvider } from '../engine/interfaces';
 import type { CPUOffer } from '../engine/AIGMService';
 import { getGMProfile } from '../data/gmProfiles';
@@ -19,12 +20,16 @@ export { formatCapAmount } from '../engine/TradeEngine';
 
 // ─── File paths ─────────────────────────────────────────────────────────────
 
+// Redraft mode gets its own file namespace so an env-var flip can never
+// overwrite the other mode's saves (see the matching pattern in WebAdapter).
+const FILE_TAG = DRAFT_MODE === 'redraft' ? 'redraft' : 'draft';
+
 function statePath(guildId: string): string {
-  return path.join(__dirname, `../../data/draft-state-${guildId}.json`);
+  return path.join(__dirname, `../../data/${FILE_TAG}-state-${guildId}.json`);
 }
 
 function boardPath(guildId: string): string {
-  return path.join(__dirname, `../../data/draft-boards-${guildId}.json`);
+  return path.join(__dirname, `../../data/${FILE_TAG}-boards-${guildId}.json`);
 }
 
 // ─── DraftManager (Discord adapter) ─────────────────────────────────────────
@@ -49,8 +54,8 @@ export class DraftManager implements PersistenceProvider, TimerProvider {
 
   static async load(client: Client, guildId: string): Promise<DraftManager> {
     const m = new DraftManager(client, guildId);
-    const state = (await m.loadState(guildId)) ?? { ...DEFAULT_STATE };
-    const boardData = (await m.loadBoards(guildId)) ?? { ...DEFAULT_BOARD_DATA };
+    const state = (await m.loadState(guildId)) ?? freshDefaultState();
+    const boardData = (await m.loadBoards(guildId)) ?? freshDefaultBoardData();
     m.engine = new DraftEngine(guildId, state, boardData, m, m);
     m.bindEvents();
     client.once('ready', () => m.engine.restoreTimer());
@@ -65,6 +70,10 @@ export class DraftManager implements PersistenceProvider, TimerProvider {
       const parsed = JSON.parse(raw) as DraftState;
       if (parsed.schemaVersion !== 1) {
         console.warn('Draft state schema mismatch — resetting to default');
+        return null;
+      }
+      if ((parsed.dataset ?? 'college') !== DRAFT_MODE) {
+        console.warn(`[${id}] Saved draft state belongs to dataset "${parsed.dataset ?? 'college'}" but bot is running "${DRAFT_MODE}" — starting fresh (rank IDs are dataset-relative)`);
         return null;
       }
       // Backfill fields added after initial schema
@@ -107,7 +116,7 @@ export class DraftManager implements PersistenceProvider, TimerProvider {
 
   async saveState(id: string, state: DraftState): Promise<void> {
     const p = statePath(id);
-    const tmp = p + '.tmp';
+    const tmp = p + `.tmp.${Date.now()}.${Math.random().toString(36).slice(2, 6)}`;
     await fs.mkdir(path.dirname(p), { recursive: true });
     await fs.writeFile(tmp, JSON.stringify(state, null, 2), 'utf-8');
     await fs.rename(tmp, p);
@@ -117,7 +126,12 @@ export class DraftManager implements PersistenceProvider, TimerProvider {
     try {
       const raw = await fs.readFile(boardPath(id), 'utf-8');
       const parsed = JSON.parse(raw) as BoardData;
+      if ((parsed.dataset ?? 'college') !== DRAFT_MODE) {
+        console.warn(`[${id}] Saved boards belong to dataset "${parsed.dataset ?? 'college'}" but bot is running "${DRAFT_MODE}" — starting fresh`);
+        return null;
+      }
       return {
+        dataset: DRAFT_MODE,
         customBoards: parsed.customBoards ?? {},
         strategyNotes: parsed.strategyNotes ?? {},
         strategyPrompts: (parsed as any).strategyPrompts ?? {},
@@ -129,7 +143,7 @@ export class DraftManager implements PersistenceProvider, TimerProvider {
 
   async saveBoards(id: string, boards: BoardData): Promise<void> {
     const p = boardPath(id);
-    const tmp = p + '.tmp';
+    const tmp = p + `.tmp.${Date.now()}.${Math.random().toString(36).slice(2, 6)}`;
     await fs.mkdir(path.dirname(p), { recursive: true });
     await fs.writeFile(tmp, JSON.stringify(boards, null, 2), 'utf-8');
     await fs.rename(tmp, p);

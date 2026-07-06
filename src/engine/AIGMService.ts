@@ -34,7 +34,7 @@ import {
   type TradeEvaluation,
   type TradeablePlayer,
 } from '../llm/TradeAI';
-import { isOllamaConfigured } from '../llm/OllamaService';
+import { isOllamaConfigured, getContextTier } from '../llm/OllamaService';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -84,6 +84,7 @@ const LEAK_HEURISTIC_BOOST = 15;    // bonus score for teams mentioned in leaks
 
 export class AIGMService {
   private pendingCPUOffers = new Map<string, CPUOffer>();
+  private recentOfferFingerprints = new Map<string, number>(); // fingerprint -> timestamp
   private lastTradeTime = new Map<string, number>();
   private deliberationAbort: AbortController | null = null;
   private tradeLog: TradeLogEntry[] = [];
@@ -100,6 +101,7 @@ export class AIGMService {
   reset(): void {
     this.cancelDeliberation();
     this.pendingCPUOffers.clear();
+    this.recentOfferFingerprints.clear();
     this.lastTradeTime.clear();
     this.tradeLog = [];
     this.recentLeaks = [];
@@ -181,11 +183,11 @@ export class AIGMService {
    * CPU team is on the clock. Runs a ~30s deliberation phase.
    * Returns true if a trade was executed (caller should NOT pick).
    */
-  async onCPUTurn(slot: PickSlot): Promise<boolean> {
+  async onCPUTurn(slot: PickSlot, durationMs?: number): Promise<boolean> {
     if (!this.isEnabled() || !isOllamaConfigured()) return false;
     this.cancelDeliberation();
     this.deliberationAbort = new AbortController();
-    return this.runDeliberation(slot, DELIBERATION_MS, false);
+    return this.runDeliberation(slot, durationMs ?? DELIBERATION_MS, false);
   }
 
   /**
@@ -346,6 +348,14 @@ export class AIGMService {
           durationMs: evalMs, result: evaluation.decision as any, reasoning: evaluation.reasoning });
 
         if (evaluation.decision === 'accept') {
+          // Don't execute trades that conflict with pending human offers
+          if (this.conflictsWithHumanOffer(idea)) {
+            console.log(`[AIGM] Pick #${pickOverall} | ${candidate.team} ↔ ${idea.partnerTeam} | SKIPPED (conflicts with human offer)`);
+            this.log({ pickOverall, phase: 'execute', team: candidate.team, partnerTeam: idea.partnerTeam,
+              durationMs: Date.now() - start, result: 'skipped', details: 'conflicts with pending human offer' });
+            continue;
+          }
+
           const trade = this.buildTrade(candidate.team, idea);
           const result = await this.host.getTradeManager().executeCPUTrade(trade);
           if (result.success) {
@@ -498,6 +508,9 @@ export class AIGMService {
   // ── Tradeable players ─────────────────────────────────────────────────
 
   getTradeablePlayers(teamAbbr: string): TradeablePlayer[] {
+    // Player trades disabled (e.g. redraft mode, where roster players ARE the
+    // draft pool) — don't offer veterans the team doesn't meaningfully own.
+    if (!this.host.getState().config.allowPlayerTrades) return [];
     const capData = TRADE_PLAYERS[teamAbbr];
     if (!capData) return [];
 
@@ -523,11 +536,33 @@ export class AIGMService {
 
   // ── CPU → Human offers ────────────────────────────────────────────────
 
+  /** Fingerprint a trade idea for dedup (same teams + same assets = same offer). */
+  private tradeFingerprint(proposer: string, idea: TradeIdea): string {
+    const parts = [
+      proposer, idea.partnerTeam,
+      idea.offeredOveralls.slice().sort().join(','),
+      idea.requestedOveralls.slice().sort().join(','),
+      idea.offeredFuturePicks.slice().sort().join(','),
+      idea.requestedFuturePicks.slice().sort().join(','),
+      idea.offeredPlayers.slice().sort().join(','),
+      idea.requestedPlayers.slice().sort().join(','),
+    ];
+    return parts.join('|');
+  }
+
   private async sendCPUOfferToHuman(
     cpuTeam: string,
     idea: TradeIdea,
     state: Readonly<DraftState>,
   ): Promise<void> {
+    // Dedup: skip if we've sent a substantially identical offer recently
+    const fp = this.tradeFingerprint(cpuTeam, idea);
+    const lastSent = this.recentOfferFingerprints.get(fp);
+    if (lastSent && Date.now() - lastSent < 120_000) {
+      console.log(`[AIGM] Suppressed duplicate offer from ${cpuTeam} to ${idea.partnerTeam}`);
+      return;
+    }
+
     // Validate ownership and non-empty sides
     const check = this.validateTradeIdea(cpuTeam, idea, state);
     if (check) {
@@ -569,6 +604,10 @@ export class AIGMService {
       isCounter: false,
     };
     this.pendingCPUOffers.set(offerId, offer);
+    this.recentOfferFingerprints.set(fp, Date.now());
+
+    const offerDetail = this.formatTradeIdea(cpuTeam, idea);
+    console.log(`[AIGM] CPU→human offer ${offerId} to ${idea.partnerTeam}: ${offerDetail} | "${idea.pitch}"`);
 
     this.host.emit('cpu-offer:sent', { offer });
   }
@@ -637,6 +676,32 @@ export class AIGMService {
         this.host.emit('cpu-offer:resolved', { offerId: id, accepted: false });
       }
     }
+  }
+
+  /** Check if an offer is waiting on a human decision. */
+  private isHumanFacingOffer(offer: CPUOffer, state: Readonly<DraftState>): boolean {
+    return !!state.assignments[offer.receiverTeam]
+      || Object.values(state.coManagers).some(uids => uids.length > 0 && state.assignments[offer.receiverTeam] !== undefined);
+  }
+
+  /** Get picks locked by outstanding human-facing offers (deliberation should not trade these). */
+  getHumanOfferLockedPicks(): Set<number> {
+    const state = this.host.getState();
+    const locked = new Set<number>();
+    for (const offer of this.pendingCPUOffers.values()) {
+      if (this.isHumanFacingOffer(offer, state)) {
+        for (const o of offer.offeredOveralls) locked.add(o);
+        for (const o of offer.requestedOveralls) locked.add(o);
+      }
+    }
+    return locked;
+  }
+
+  /** Returns true if any pick in the trade idea is locked by a pending human offer. */
+  private conflictsWithHumanOffer(idea: { offeredOveralls: number[]; requestedOveralls: number[] }): boolean {
+    const locked = this.getHumanOfferLockedPicks();
+    return idea.offeredOveralls.some(o => locked.has(o))
+      || idea.requestedOveralls.some(o => locked.has(o));
   }
 
   // ── Trade idea validation ──────────────────────────────────────────────
@@ -738,6 +803,11 @@ export class AIGMService {
     if (!evaluation) return false;
 
     if (evaluation.decision === 'accept') {
+      if (this.conflictsWithHumanOffer(idea)) {
+        console.log(`[AIGM] CPU↔CPU trade ${proposerTeam} ↔ ${idea.partnerTeam} SKIPPED (conflicts with human offer)`);
+        return false;
+      }
+
       const trade = this.buildTrade(proposerTeam, idea);
       const result = await this.host.getTradeManager().executeCPUTrade(trade);
       if (result.success) {
@@ -820,6 +890,11 @@ export class AIGMService {
     }, false, timeoutMs, signal);
 
     if (response?.decision === 'accept') {
+      if (this.conflictsWithHumanOffer(counter)) {
+        console.log(`[AIGM] CPU counter-trade ${counterTeam} ↔ ${originalProposer} SKIPPED (conflicts with human offer)`);
+        return false;
+      }
+
       const trade: PendingTrade = {
         id: generateOfferId(),
         proposerUserId: 'cpu',
@@ -1008,7 +1083,7 @@ export class AIGMService {
       .filter(l => l.mentionedTeams.includes(teamAbbr) || l.leakerTeam === teamAbbr || leaks.length <= 3)
       .map(l => l.tweet);
 
-    return {
+    const ctx: TradeAIContext = {
       teamAbbr,
       teamPicks,
       teamFuturePicks,
@@ -1022,6 +1097,35 @@ export class AIGMService {
       recentLeaks: relevantLeaks,
       boardTopRanks,
     };
+
+    // Rich context: roster depth + trade history (only when large context window available)
+    if (getContextTier() === 'rich') {
+      const roster = ROSTERS[teamAbbr];
+      if (roster?.length) {
+        const byPos: Record<string, string[]> = {};
+        for (const p of roster) {
+          (byPos[p.pos] ??= []).push(p.name);
+        }
+        ctx.rosterDepth = byPos;
+      }
+
+      const history = state.tradeHistory ?? [];
+      if (history.length) {
+        ctx.recentTradeHistory = history.slice(-10).map(t => {
+          const parts: string[] = [];
+          if (t.offeredOveralls.length) parts.push(`picks ${t.offeredOveralls.map(o => `#${o}`).join(',')}`);
+          if (t.offeredPlayers?.length) parts.push(`players ${t.offeredPlayers.join(',')}`);
+          if (t.offeredFuturePicks?.length) parts.push(`future ${t.offeredFuturePicks.join(',')}`);
+          parts.push('for');
+          if (t.requestedOveralls.length) parts.push(`picks ${t.requestedOveralls.map(o => `#${o}`).join(',')}`);
+          if (t.requestedPlayers?.length) parts.push(`players ${t.requestedPlayers.join(',')}`);
+          if (t.requestedFuturePicks?.length) parts.push(`future ${t.requestedFuturePicks.join(',')}`);
+          return { proposer: t.proposerTeam, receiver: t.receiverTeam, summary: parts.join(' ') };
+        });
+      }
+    }
+
+    return ctx;
   }
 
   private buildTrade(proposerTeam: string, idea: TradeIdea): PendingTrade {

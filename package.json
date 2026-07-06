@@ -8,7 +8,8 @@
     "start": "node build/index.js",
     "dev": "ts-node src/index.ts",
     "deploy": "ts-node src/deploy-commands.ts",
-    "gen-rosters": "ts-node scripts/generate-rosters.ts"
+    "gen-rosters": "ts-node scripts/generate-rosters.ts",
+    "gen-redraft": "ts-node scripts/generate-redraft-dataset.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

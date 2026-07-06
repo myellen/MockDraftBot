@@ -101,7 +101,7 @@ export function Header({ roomCode, state, teams, isAdmin, onLeave }: HeaderProps
             {status === 'active' && (
               <Timer
                 expiresAt={state?.timerExpiresAt ?? null}
-                timerSeconds={state?.config.timerSeconds ?? null}
+                timerSeconds={state?.timerExpiresAt ? (state?.config.timerSeconds ?? 60) : state?.config.timerSeconds ?? null}
               />
             )}
           </>

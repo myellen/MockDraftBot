@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import type { RoomManager } from '../RoomManager';
 import { TEAMS } from '../../data/teams';
-import { PROSPECT_BY_RANK } from '../../data/prospects';
+import { DRAFT_MODE } from '../../data/draftMode';
+import { getQueueStats } from '../../llm/OllamaService';
 
 export function stateRoutes(rm: RoomManager): Router {
   const router = Router();
@@ -13,6 +14,7 @@ export function stateRoutes(rm: RoomManager): Router {
     res.json({
       state: room.adapter.engine.getState(),
       teams: TEAMS,
+      mode: DRAFT_MODE,
     });
   });
 
@@ -25,6 +27,11 @@ export function stateRoutes(rm: RoomManager): Router {
     const pageSize = Math.min(parseInt(req.query.pageSize as string) || 50, 100);
     const result = room.adapter.engine.getAvailableProspects(pos, page, pageSize);
     res.json(result);
+  });
+
+  // LLM queue stats (no auth required — read-only monitoring)
+  router.get('/llm-queue', (_req, res) => {
+    res.json(getQueueStats());
   });
 
   return router;

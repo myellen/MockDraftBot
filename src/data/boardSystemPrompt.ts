@@ -9,11 +9,15 @@
 // This file contains the enriched prompt text blocks to be injected into
 // board-ai.ts's buildBoardSystemPrompt() function.
 
+import { DRAFT_MODE } from './draftMode';
+
 /**
  * Team-specific draft intelligence keyed by team abbreviation.
  * Inject after "## Current Draft Strategy" in the board-ai system prompt.
+ * College-class intel only — empty in redraft mode (injection sites already
+ * guard on presence, so the section self-removes).
  */
-export const TEAM_DRAFT_INTEL: Record<string, string> = {
+const COLLEGE_TEAM_DRAFT_INTEL: Record<string, string> = {
   // ── AFC EAST ──────────────────────────────────────────────────────────
   BUF: `NEEDS: EDGE > LB > WR > DT > CB. Safety/LB 22nd PFF.
 GM: Beane — opportunist, patient, trades back when board clusters.
@@ -181,11 +185,16 @@ GM: Schneider — high-volume trader (74 pick trades across 16 drafts). Expect 3
 CAPITAL: Standard, but Schneider will restructure it on draft day. Final order will look nothing like the original.`,
 };
 
+export const TEAM_DRAFT_INTEL: Record<string, string> =
+  DRAFT_MODE === 'redraft' ? {} : COLLEGE_TEAM_DRAFT_INTEL;
+
 /**
  * General draft knowledge block.
  * Inject after the team-specific intel section.
+ * The value chart + trade-success stats apply to any draft; the prospect buzz
+ * and trade scenarios are 2026-college-class-specific.
  */
-export const DRAFT_KNOWLEDGE_BLOCK = `## Draft Value & Trade Intelligence
+const VALUE_KNOWLEDGE_BLOCK = `## Draft Value & Trade Intelligence
 
 **Jimmy Johnson Trade Value Chart (key picks)**:
 Pick 1=3000, 2=2600, 3=2200, 4=1800, 5=1700, 6=1600, 7=1500, 8=1400, 9=1350, 10=1300, 11=1250, 12=1200, 13=1150, 14=1100, 15=1050, 16=1000, 17=950, 18=900, 19=875, 20=850, 21=800, 22=780, 23=760, 24=740, 25=720, 26=700, 27=680, 28=660, 29=640, 30=620, 31=604, 32=590, 33=580, 34=560, 35=550, 36=540, 40=480, 45=420, 50=370, 55=330, 60=300, 64=270, 70=230, 80=180, 90=140, 100=96
@@ -198,9 +207,9 @@ Both sides should exchange roughly equal total value. Flag lopsided deals.
 - Teams trading DOWN won 85 of 140 non-QB first-three-round matchups — trading down is statistically superior.
 - Surplus value peaks in the late 1st / early 2nd (picks 20-40) — sweet spot for value.
 - QB and EDGE trade-ups succeed at higher rates than other positions — the only justifiable trade-up targets.
-- WR trade-ups: 8 in five years, zero Pro Bowlers — 0% Pro Bowl rate.
+- WR trade-ups: 8 in five years, zero Pro Bowlers — 0% Pro Bowl rate.`;
 
-**2026 Draft Intel — Prospect Buzz**:
+const COLLEGE_BUZZ_BLOCK = `**2026 Draft Intel — Prospect Buzz**:
 - No. 1: Mendoza (QB, Indiana) to Raiders — universal consensus.
 - No. 2: Bailey (EDGE, Texas Tech) vs Reese (LB/EDGE, Ohio State) — 50/50 for Jets.
 - No. 3: RT or Ohio State LB to Cardinals — insider intel says NOT a QB.
@@ -217,3 +226,13 @@ Both sides should exchange roughly equal total value. Flag lopsided deals.
 - Eagles' Roseman: if an EDGE falls, expect Philadelphia to pounce. Warn teams picking ahead of PHI.
 - Houston's Caserio will make multiple trades on draft day (25 trades since 2021).
 - Seattle's Schneider averages 4-5 trades per draft (74 across 16 drafts) — picks will shift constantly.`;
+
+const REDRAFT_NOTE = `**Redraft Mode**:
+- Every current NFL player is in the pool and all rosters start empty — teams are rebuilding from scratch.
+- The Available Prospects pool IDs ARE the consensus value ranking in this mode (lower ID = better redraft asset).
+- Favor young, ascending players at premium positions (QB, EDGE, OT, CB, WR) early.`;
+
+export const DRAFT_KNOWLEDGE_BLOCK =
+  DRAFT_MODE === 'redraft'
+    ? `${VALUE_KNOWLEDGE_BLOCK}\n\n${REDRAFT_NOTE}`
+    : `${VALUE_KNOWLEDGE_BLOCK}\n\n${COLLEGE_BUZZ_BLOCK}`;

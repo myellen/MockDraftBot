@@ -9,12 +9,15 @@
  * Each wraps a chatJSON call with an 8-second timeout.
  */
 
-import { chatJSON, LLMAbortError } from './OllamaService';
+import { chatJSON, LLMAbortError, getContextTier } from './OllamaService';
 import { GMProfile } from '../data/gmProfiles';
 import { getPickValue, getValueChartPrompt, evaluateTradeValue, type ValueChartType } from '../engine/tradeValue';
 import { PROSPECT_BY_RANK } from '../data/prospects';
+import { DRAFT_MODE } from '../data/draftMode';
 import { TEAMS } from '../data/teams';
-import { TRADE_PLAYERS } from '../data/capData';
+import { TRADE_PLAYERS, TEAM_CAP } from '../data/capData';
+import { ROSTERS } from '../data/rosters';
+import { lookupProspect } from '../data/beastScouting';
 
 // ── Response types ──────────────────────────────────────────────────────────
 
@@ -73,6 +76,10 @@ export interface TradeAIContext {
   recentLeaks?: string[];
   /** Top available prospect ranks from the GM's board. */
   boardTopRanks?: number[];
+  /** Recent trade history for rich context. */
+  recentTradeHistory?: Array<{ proposer: string; receiver: string; summary: string }>;
+  /** Roster depth by position for rich context. */
+  rosterDepth?: Record<string, string[]>;
 }
 
 const LLM_TIMEOUT_MS = 15000;
@@ -119,6 +126,9 @@ function buildPlayerList(players: TradeablePlayer[]): string {
 }
 
 function validatePlayerNames(names: string[] | undefined, teamAbbr: string): string[] {
+  // Redraft has no veteran/player trades — drop any player assets the LLM
+  // hallucinates instead of letting them reach validation/execution.
+  if (DRAFT_MODE === 'redraft') return [];
   if (!names?.length) return [];
   const teamPlayers = TRADE_PLAYERS[teamAbbr];
   if (!teamPlayers) return [];
@@ -131,9 +141,74 @@ function buildLeakContext(leaks: string[] | undefined): string {
   return `\nRecent insider reports (use these to identify trade opportunities):\n${items}\n`;
 }
 
+/** Build extra context sections available only in rich (large context) mode. */
+function buildRichContext(ctx: TradeAIContext): string {
+  if (getContextTier() !== 'rich') return '';
+  const parts: string[] = [];
+
+  // Cap situation — college-universe contracts don't exist in a redraft
+  const cap = DRAFT_MODE === 'redraft' ? undefined : TEAM_CAP[ctx.teamAbbr];
+  if (cap) {
+    parts.push(`Cap space: $${(cap.capSpace / 1000).toFixed(1)}M | Dead money: $${(cap.deadMoney / 1000).toFixed(1)}M`);
+  }
+
+  // Roster depth by position
+  if (ctx.rosterDepth) {
+    const depthLines = Object.entries(ctx.rosterDepth)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([pos, names]) => `  ${pos}: ${names.join(', ')}`);
+    if (depthLines.length) parts.push(`Roster depth:\n${depthLines.join('\n')}`);
+  }
+
+  // Scouting reports for top board prospects
+  if (ctx.boardTopRanks?.length) {
+    const reports: string[] = [];
+    for (const rank of ctx.boardTopRanks.slice(0, 5)) {
+      const p = PROSPECT_BY_RANK.get(rank);
+      if (!p) continue;
+      try {
+        const raw = JSON.parse(lookupProspect(p.name));
+        if (raw.error) continue;
+        const lines = [`${raw.name} (${raw.pos}) — Grade: ${raw.grade}`];
+        if (raw.strengths?.length) lines.push(`  +${raw.strengths.slice(0, 3).join('; ')}`);
+        if (raw.weaknesses?.length) lines.push(`  -${raw.weaknesses.slice(0, 2).join('; ')}`);
+        reports.push(lines.join('\n'));
+      } catch { /* scouting data not available */ }
+    }
+    if (reports.length) parts.push(`Scouting intel on top targets:\n${reports.join('\n')}`);
+  }
+
+  // Recent trade history
+  if (ctx.recentTradeHistory?.length) {
+    const histLines = ctx.recentTradeHistory.slice(0, 8).map(t => `  ${t.proposer} ↔ ${t.receiver}: ${t.summary}`);
+    parts.push(`Recent trades:\n${histLines.join('\n')}`);
+  }
+
+  return parts.length ? '\n' + parts.join('\n\n') + '\n' : '';
+}
+
+// Trade prompts render the available pool with this label; redraft pools are
+// current NFL veterans, not college prospects.
+const AVAILABLE_POOL_LABEL = DRAFT_MODE === 'redraft'
+  ? 'Top available players (current NFL veterans — league-wide redraft)'
+  : 'Top available prospects';
+
+// GM personalities are written around the college draft class. The scouting
+// identity (philosophy, needs, risk appetite) transfers to a redraft, but
+// named college TARGETS and this-year CAPITAL notes do not — strip them.
+function personalityForMode(personality: string): string {
+  if (DRAFT_MODE !== 'redraft') return personality;
+  // NEEDS describe the real current roster (empty in redraft) and INTEL/TARGETS/
+  // CAPITAL reference the college class and real draft capital.
+  return personality.replace(/^\s*(TARGETS|CAPITAL|NEEDS|INTEL):.*$\n?/gm, '').trimEnd();
+}
+
 function buildGMSystemPrompt(profile: GMProfile, role: string): string {
-  return `You are an NFL GM AI for the ${TEAMS[profile.team]?.name ?? profile.team}.
-Personality: ${profile.personality}
+  const modeNote = DRAFT_MODE === 'redraft'
+    ? '\nMODE: League-wide REDRAFT — every current NFL player is in the pool and all rosters start empty. You are rebuilding your team from scratch; there are no veteran/player trades, only picks and future picks.'
+    : '';
+  return `You are an NFL GM AI for the ${TEAMS[profile.team]?.name ?? profile.team}.${modeNote}
+Personality: ${personalityForMode(profile.personality)}
 Trade aggression: ${profile.tradeAggression}/1.0 | Risk tolerance: ${profile.riskTolerance}/1.0
 
 ${role}
@@ -214,7 +289,7 @@ Your picks: ${buildPickList(ctx.teamPicks.map(p => p.overall), chart)}
 Your future picks: ${ctx.teamFuturePicks.map(f => f.id).join(', ') || 'none'}
 Already drafted: ${ctx.draftedByTeam.map(p => `${p.name} (${p.pos})`).join(', ') || 'none'}
 ${ctx.strategyPrompt ? `Strategy: ${ctx.strategyPrompt}` : ''}
-Top available prospects: ${buildAvailableProspects(ctx.availableRanks)}${leakInfo}`;
+${AVAILABLE_POOL_LABEL}: ${buildAvailableProspects(ctx.availableRanks)}${leakInfo}${buildRichContext(ctx)}`;
 
   try {
     const timeout = timeoutMs ?? (humanInitiated ? LLM_TIMEOUT_HUMAN_MS : LLM_TIMEOUT_MS);
@@ -285,7 +360,7 @@ export async function generateTradeIdea(
   }
   const partnerSummary = [...otherTeamPicks.entries()]
     .slice(0, 12)
-    .map(([team, picks]) => `${team}: ${picks.slice(0, 4).map(o => `#${o}`).join(', ')}`)
+    .map(([team, picks]) => `${team}: ${picks.slice(0, 4).map(o => `#${o} (${getPickValue(o, chart)})`).join(', ')}`)
     .join('\n');
 
   const playerNote = ctx.tradeablePlayers.length
@@ -293,7 +368,8 @@ export async function generateTradeIdea(
     : '';
 
   const system = buildGMSystemPrompt(profile, `You are looking for trade opportunities. Propose a trade with another team, or decline if nothing makes sense.
-- Only propose trades where the value is reasonably balanced
+- CRITICAL: Add up the point values of both sides using the chart above. Your offer's total value MUST be within 30% of what you request. Trades with a >1.5x value ratio will be rejected.
+- The value chart numbers are shown next to each pick. Use them. A trade offering 800 points of picks for 1400 points is not "reasonably balanced."
 - Consider which teams might want to trade up or down
 - Your trade should align with your personality and team needs
 - You may include rostered players in trades for added value
@@ -309,10 +385,10 @@ Your future picks: ${ctx.teamFuturePicks.map(f => `${f.id} (value: ${getPickValu
 Already drafted: ${ctx.draftedByTeam.map(p => `${p.name} (${p.pos})`).join(', ') || 'none'}
 Draft progress: pick ${ctx.currentPickIndex + 1} of ${ctx.totalPicks}
 ${ctx.strategyPrompt ? `Strategy: ${ctx.strategyPrompt}` : ''}
-Top available prospects: ${buildAvailableProspects(ctx.availableRanks)}
+${AVAILABLE_POOL_LABEL}: ${buildAvailableProspects(ctx.availableRanks)}
 
 Other teams' remaining picks:
-${partnerSummary}${leakInfo}`;
+${partnerSummary}${leakInfo}${buildRichContext(ctx)}`;
 
   try {
     const raw = await withAbortableTimeout(
@@ -397,6 +473,7 @@ Consider:
 - Are the top available prospects worth this pick, or is there a drop-off where trading down makes sense?
 - Would multiple later picks give you more total value?
 - Your personality: aggressive GMs trade up, builders trade down, fortress GMs just pick
+- CRITICAL: If you propose a trade, the total value of what you request must be within 30% of what you offer. Use the value chart numbers shown next to each pick.
 ${playerNote}
 
 Return JSON: {"action":"pick"} or {"action":"trade","tradeIdea":{"partnerTeam":"<ABBR>","offeredOveralls":[${currentPick.overall}],"requestedOveralls":[...],"offeredFuturePicks":[...],"requestedFuturePicks":[...],"offeredPlayers":[...],"requestedPlayers":[...],"pitch":"<1 sentence>"}}`);
@@ -417,7 +494,7 @@ ${ctx.strategyPrompt ? `Strategy: ${ctx.strategyPrompt}` : ''}
 Top available: ${buildAvailableProspects(ctx.availableRanks, 10)}
 
 Teams that might want to trade up:
-${partnerSummary}${leakInfo}`;
+${partnerSummary}${leakInfo}${buildRichContext(ctx)}`;
 
   try {
     const raw = await withAbortableTimeout(

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import * as api from '../api';
 import type { DraftState, DraftConfig, TradeAnnouncement } from '../types';
 
@@ -192,6 +192,69 @@ export function Settings({ roomCode, state, isAdmin }: SettingsProps) {
       )}
 
       {msg && <div className={`status-msg ${msg.includes('!') ? 'success' : 'error'}`} style={{ marginTop: 8 }}>{msg}</div>}
+
+      <LLMQueueMonitor />
+    </div>
+  );
+}
+
+// ── LLM Queue Monitor ───────────────────────────────────────────────────────
+
+function LLMQueueMonitor() {
+  const [stats, setStats] = useState<{ active: number; queued: number; queuedLow: number } | null>(null);
+
+  const poll = useCallback(() => {
+    api.getLLMQueue().then(setStats).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    poll();
+    const id = setInterval(poll, 3000);
+    return () => clearInterval(id);
+  }, [poll]);
+
+  if (!stats) return null;
+
+  const total = stats.active + stats.queued + stats.queuedLow;
+  const maxSlots = 8; // visual slots to render
+
+  return (
+    <div style={{ marginTop: 24, padding: 12, background: 'var(--bg-deep)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)' }}>
+      <div className="section-header" style={{ marginBottom: 8, fontSize: '0.7rem' }}>LLM Queue</div>
+      <div style={{ display: 'flex', gap: 3, marginBottom: 8 }}>
+        {Array.from({ length: maxSlots }, (_, i) => {
+          let color = 'var(--bg-card)';
+          let label = '';
+          if (i < stats.active) {
+            color = 'var(--accent-green)';
+            label = 'active';
+          } else if (i < stats.active + stats.queued) {
+            color = 'var(--accent-warning, #f59e0b)';
+            label = 'queued';
+          } else if (i < total) {
+            color = 'var(--text-dim)';
+            label = 'low';
+          }
+          return (
+            <div
+              key={i}
+              title={label}
+              style={{
+                flex: 1,
+                height: 6,
+                borderRadius: 2,
+                background: color,
+                transition: 'background 0.3s',
+              }}
+            />
+          );
+        })}
+      </div>
+      <div style={{ display: 'flex', gap: 12, fontSize: '0.65rem', color: 'var(--text-dim)' }}>
+        <span><span style={{ color: 'var(--accent-green)' }}>{stats.active}</span> active</span>
+        <span><span style={{ color: 'var(--accent-warning, #f59e0b)' }}>{stats.queued}</span> queued</span>
+        <span><span style={{ color: 'var(--text-secondary)' }}>{stats.queuedLow}</span> low-pri</span>
+      </div>
     </div>
   );
 }

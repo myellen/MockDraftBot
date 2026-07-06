@@ -93,6 +93,7 @@ export interface CancelledTrade extends PendingTrade {
 
 export interface DraftState {
   schemaVersion: number;
+  dataset?: string;                        // 'college' | 'redraft' — pool the rank IDs belong to (absent = college)
   status: DraftStatus;
   config: DraftConfig;
   assignments: Record<string, string>;     // teamAbbr -> primary GM userId
@@ -118,13 +119,14 @@ export interface TradeLogEntry {
   partnerTeam?: string;
   durationMs: number;
   result: 'filtered' | 'no-idea' | 'idea' | 'blocked-unreasonable'
-        | 'accepted' | 'declined' | 'counter' | 'executed' | 'timeout' | 'error';
+        | 'accepted' | 'declined' | 'counter' | 'executed' | 'timeout' | 'error' | 'skipped';
   reasoning?: string;
   details?: string;
   error?: string;
 }
 
 export interface BoardData {
+  dataset?: string;                            // pool the board ranks belong to (absent = college)
   customBoards: Record<string, number[]>;      // teamAbbr -> ordered prospect ranks (GM-submitted)
   strategyNotes: Record<string, string[]>;     // teamAbbr -> last N board-ai instructions for LLM memory
   strategyPrompts: Record<string, string>;     // teamAbbr -> distilled strategy prompt for autopick AI

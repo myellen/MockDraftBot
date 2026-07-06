@@ -1,12 +1,14 @@
 node_modules/
 build/
+backups/
 .env
 .env.backup.txt
 data/*
 !data/*.example.json
-src/data/prospects.ts
-src/data/rosters.ts
-src/data/draftOrder.ts
+src/data/prospects.college.ts
+src/data/prospects.redraft.ts
+src/data/rosters.college.ts
+src/data/draftOrder.college.ts
 src/data/salaries.ts
 src/data/*.docx
 src/data/*.xlsx

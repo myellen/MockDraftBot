@@ -51,7 +51,7 @@ const researchTurns = numFlag('--turns', 4);
 const numCtx = numFlag('--ctx', 65536);
 const BOARD_SIZE = 150;
 
-const OUTPUT_PATH = path.join(__dirname, '..', 'src', 'data', 'gmBoards.ts');
+const OUTPUT_PATH = path.join(__dirname, '..', 'src', 'data', 'gmBoards.college.ts');
 const WIKI_DIR = path.join(__dirname, '..', 'wikiBasedPrompts');
 
 // ── GM name extraction ─────────────────────────────────────────────────────

@@ -17,6 +17,12 @@ export interface OllamaConfig {
 export type PromptSource = string | (() => string);
 
 export type LLMPriority = 'high' | 'low';
+export type ContextTier = 'compact' | 'rich';
+
+/** Returns 'rich' when using Anthropic (200K context), 'compact' for Ollama. */
+export function getContextTier(): ContextTier {
+  return isAnthropicConfigured() ? 'rich' : 'compact';
+}
 
 export interface ChatOptions {
   temperature?: number;

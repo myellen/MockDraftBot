@@ -8,6 +8,7 @@ import { TypedEventEmitter, DraftEventMap } from './events';
 import type { PersistenceProvider, TimerProvider } from './interfaces';
 import { buildSchedule } from './scheduleBuilder';
 import { FUTURE_PICK_TRADES } from '../data/draftOrder';
+import { DRAFT_MODE } from '../data/draftMode';
 import { PROSPECTS_DEDUPED, PROSPECT_BY_RANK } from '../data/prospects';
 import { TEAMS } from '../data/teams';
 import { ROSTERS } from '../data/rosters';
@@ -43,6 +44,7 @@ export function buildFuturePickRights(): FuturePickRight[] {
 }
 
 export const DEFAULT_BOARD_DATA: BoardData = {
+  dataset: DRAFT_MODE,
   customBoards: {},
   strategyNotes: {},
   strategyPrompts: {},
@@ -50,8 +52,11 @@ export const DEFAULT_BOARD_DATA: BoardData = {
 
 export const DEFAULT_STATE: DraftState = {
   schemaVersion: 1,
+  dataset: DRAFT_MODE,
   status: 'idle',
-  config: { channelId: null, timerSeconds: 60, autoPick: true, rounds: 7, allowPlayerTrades: true, tradeAnnouncement: 'insider', enforceSalaryCap: true, cpuTrading: true, simulationMode: false, gmExtraResearch: false },
+  // Redraft: the pool and the rosters are the same humans, so player trades are
+  // off, and cap baselines/rookie-scale math don't describe redrafted contracts.
+  config: { channelId: null, timerSeconds: 60, autoPick: true, rounds: 7, allowPlayerTrades: DRAFT_MODE !== 'redraft', tradeAnnouncement: 'insider', enforceSalaryCap: DRAFT_MODE !== 'redraft', cpuTrading: true, simulationMode: false, gmExtraResearch: false },
   assignments: {},
   coManagers: {},
   schedule: [],
@@ -66,8 +71,56 @@ export const DEFAULT_STATE: DraftState = {
   futurePickRights: buildFuturePickRights(),
 };
 
+/**
+ * Fresh deep-ish copies for new guilds/rooms. A bare `{ ...DEFAULT_STATE }`
+ * shares the mutable containers (futurePickRights objects get mutated in place
+ * by TradeEngine; customBoards by submitBoard) across every instance.
+ */
+export function freshDefaultState(): DraftState {
+  return {
+    ...DEFAULT_STATE,
+    config: { ...DEFAULT_STATE.config },
+    assignments: {},
+    coManagers: {},
+    schedule: [],
+    picks: [],
+    availableRanks: [],
+    pendingTrades: [],
+    tradeHistory: [],
+    cancelledTrades: [],
+    playerOwnership: {},
+    futurePickRights: buildFuturePickRights(),
+  };
+}
+
+export function freshDefaultBoardData(): BoardData {
+  return {
+    dataset: DRAFT_MODE,
+    customBoards: {},
+    strategyNotes: {},
+    strategyPrompts: {},
+  };
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Loose prospect-name key for board matching: strips the trailing [ABBR]
+ * disambiguation tag the redraft generator adds to duplicate names, plus
+ * punctuation and generational suffixes (so a pasted 'Kyle Pitts' matches the
+ * pool's 'Kyle Pitts Sr.'). Used only as a fallback after exact matching, and
+ * only when the loose key is unambiguous within the pool.
+ */
+function looseNameKey(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/\s*\[[^\]]*\]\s*$/, '')
+    .replace(/[.'\u2019\-]/g, ' ')
+    .replace(/\b(jr|sr|ii|iii|iv|v)\b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 // ─── DraftEngine ────────────────────────────────────────────────────────────
@@ -129,8 +182,8 @@ export class DraftEngine extends TypedEventEmitter<DraftEventMap> {
     persistence: PersistenceProvider,
     timer: TimerProvider,
   ): Promise<DraftEngine> {
-    const state = (await persistence.loadState(id)) ?? { ...DEFAULT_STATE };
-    const boards = (await persistence.loadBoards(id)) ?? { ...DEFAULT_BOARD_DATA };
+    const state = (await persistence.loadState(id)) ?? freshDefaultState();
+    const boards = (await persistence.loadBoards(id)) ?? freshDefaultBoardData();
     return new DraftEngine(id, state, boards, persistence, timer);
   }
 
@@ -218,8 +271,9 @@ export class DraftEngine extends TypedEventEmitter<DraftEventMap> {
   async reset(): Promise<void> {
     this.clearTimer();
     this.aiGM.reset();
-    this.state = {
-      ...this.state,
+    // Mutate in place — TradeEngine captured this.state at construction, so
+    // replacing the object would leave trade validation reading a stale copy.
+    Object.assign(this.state, {
       status: 'idle',
       schedule: [],
       currentPickIndex: 0,
@@ -229,16 +283,20 @@ export class DraftEngine extends TypedEventEmitter<DraftEventMap> {
       pendingTrades: [],
       tradeHistory: [],
       cancelledTrades: [],
+      playerOwnership: {},
+      futurePickRights: buildFuturePickRights(),
       feedItems: [],
-    };
+    });
     await this.persist();
     this.emit('draft:reset', {} as Record<string, never>);
   }
 
   async wipe(): Promise<void> {
     this.clearTimer();
-    this.state = { ...DEFAULT_STATE };
-    this.boardData = { ...DEFAULT_BOARD_DATA };
+    this.aiGM.reset();
+    // In-place for the same reason as reset() — keep captured references live.
+    Object.assign(this.state, freshDefaultState());
+    Object.assign(this.boardData, freshDefaultBoardData());
     await this.persist();
     await this.persistBoardData();
     this.emit('draft:reset', {} as Record<string, never>);
@@ -377,6 +435,8 @@ export class DraftEngine extends TypedEventEmitter<DraftEventMap> {
 
   private async advanceInner(): Promise<boolean> {
     const maxRounds = this.state.config.rounds ?? 7;
+    let timerPickIndex = -1;       // which pick index has the timer set
+    let tradedIntoPick = false;    // team that traded in must pick, no deliberation
     while (true) {
       // Stop advancing if draft was paused or is no longer active
       if (this.state.status !== 'active') return false;
@@ -393,18 +453,36 @@ export class DraftEngine extends TypedEventEmitter<DraftEventMap> {
       const userId = this.state.assignments[slot.currentTeam] ?? null;
 
       if (!userId && this.state.config.autoPick) {
-        // CPU turn — deliberation phase (~30s) then pick
-        const traded = await this.aiGM.onCPUTurn(slot);
+        const cpuTimerMs = (this.state.config.timerSeconds ?? 60) * 1000;
 
-        // Re-check status after async deliberation (user may have paused)
-        if (this.state.status !== 'active') return false;
+        // Set timer ONCE per pick position — trades don't reset it
+        if (timerPickIndex !== this.state.currentPickIndex) {
+          this.state.timerExpiresAt = Date.now() + cpuTimerMs;
+          timerPickIndex = this.state.currentPickIndex;
+          tradedIntoPick = false;
+          await this.persist();
+        }
+        this.emit('pick:clock', { slot, teamAbbr: slot.currentTeam });
 
-        if (traded) {
-          // Trade changed the clock — re-evaluate from the top
-          continue;
+        // Deliberate only if this team didn't just trade INTO this pick
+        if (!tradedIntoPick) {
+          const remainingMs = Math.max(1000, (this.state.timerExpiresAt ?? 0) - Date.now());
+          const traded = await this.aiGM.onCPUTurn(slot, remainingMs);
+
+          if (this.state.status !== 'active') return false;
+
+          if (traded) {
+            // If the pick's team changed, the new team must pick (no flip trades)
+            const newSlot = this.state.schedule[this.state.currentPickIndex];
+            if (newSlot.currentTeam !== slot.currentTeam) {
+              tradedIntoPick = true;
+            }
+            continue;
+          }
         }
 
-        // No trade — pick best available
+        // Pick best available
+        this.state.timerExpiresAt = null;
         const bestRank = await this.getBestPickForTeam(slot.currentTeam);
         if (bestRank === undefined) break;
         const pick = this.recordPick(slot, bestRank, null, true);
@@ -412,7 +490,6 @@ export class DraftEngine extends TypedEventEmitter<DraftEventMap> {
         await this.persist();
         void this.aiGM.onPickMade(pick);
 
-        // No delay — deliberation already provides ~30s pacing
         continue;
       }
 
@@ -457,12 +534,27 @@ export class DraftEngine extends TypedEventEmitter<DraftEventMap> {
   }
 
   restoreTimer(): void {
-    if (this.state.status !== 'active' || this.state.timerExpiresAt === null) return;
-    const remaining = this.state.timerExpiresAt - Date.now();
-    if (remaining <= 0) {
-      this.timerHandle = this.timer.schedule(0, () => this.onTimerExpired());
-    } else {
-      this.timerHandle = this.timer.schedule(remaining, () => this.onTimerExpired());
+    if (this.state.status !== 'active') return;
+
+    if (this.state.timerExpiresAt !== null) {
+      const remaining = this.state.timerExpiresAt - Date.now();
+      if (remaining <= 0) {
+        this.timerHandle = this.timer.schedule(0, () => this.onTimerExpired());
+      } else {
+        this.timerHandle = this.timer.schedule(remaining, () => this.onTimerExpired());
+      }
+    }
+
+    // Restart AI GM deliberation for the current pick
+    const slot = this.getCurrentSlot();
+    if (slot && this.state.config.cpuTrading) {
+      const userId = this.state.assignments[slot.currentTeam];
+      if (userId) {
+        void this.aiGM.onHumanTurn(slot);
+      } else if (!userId && this.state.config.autoPick) {
+        // CPU is on the clock — restart the advance loop
+        void this.advance();
+      }
     }
   }
 
@@ -536,13 +628,19 @@ export class DraftEngine extends TypedEventEmitter<DraftEventMap> {
 
   submitBoard(teamAbbr: string, rankedNames: string[]): { matched: number; unmatched: string[] } {
     const nameToRank = new Map<string, number>();
-    for (const [rank, p] of PROSPECT_BY_RANK) nameToRank.set(p.name.toLowerCase(), rank);
+    const looseToRank = new Map<string, number | null>(); // null = ambiguous loose key
+    for (const [rank, p] of PROSPECT_BY_RANK) {
+      nameToRank.set(p.name.toLowerCase(), rank);
+      const loose = looseNameKey(p.name);
+      looseToRank.set(loose, looseToRank.has(loose) ? null : rank);
+    }
 
     const ranks: number[] = [];
     const unmatched: string[] = [];
     for (const rawName of rankedNames) {
       const name = rawName.replace(/\s*\(.*\)\s*$/, '').trim();
-      const rank = nameToRank.get(name.toLowerCase());
+      let rank = nameToRank.get(name.toLowerCase());
+      if (rank === undefined) rank = looseToRank.get(looseNameKey(name)) ?? undefined;
       if (rank !== undefined) ranks.push(rank);
       else unmatched.push(rawName);
     }

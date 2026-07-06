@@ -5,6 +5,7 @@ import { Header } from './Header';
 import { DraftBoard } from './DraftBoard';
 import { CommandCenter } from './CommandCenter';
 import { SocialFeed } from './SocialFeed';
+import { setDraftMode } from '../mode';
 import type { DraftState, Team, FeedItem, CompletedPick, PendingTrade, InsiderTweet, CPUOffer } from '../types';
 import '../styles/room.css';
 
@@ -49,6 +50,7 @@ export function DraftRoom({ roomCode, token, isAdmin, onLeave }: DraftRoomProps)
   // Fetch initial state + connect WebSocket
   useEffect(() => {
     api.getState(roomCode).then(d => {
+      setDraftMode(d.mode);
       setState(d.state);
       setTeams(d.teams);
       // Restore persisted feed items

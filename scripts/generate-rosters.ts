@@ -1,10 +1,10 @@
 /**
- * Fetches current NFL rosters from the ESPN API and regenerates src/data/rosters.ts.
+ * Fetches current NFL rosters from the ESPN API and regenerates src/data/rosters.college.ts.
  *
  * Usage:
  *   npx ts-node scripts/generate-rosters.ts
  *
- * Overwrites src/data/rosters.ts in place.
+ * Overwrites src/data/rosters.college.ts in place.
  */
 
 import * as fs from 'fs';
@@ -33,6 +33,7 @@ function normalizePos(espnPos: string): string {
     case 'NT':                     return 'DT';
     case 'SLB': case 'WLB':        return 'LB';
     case 'SAF':                    return 'S';
+    case 'PK':                     return 'K';
     default:                       return espnPos;
   }
 }
@@ -135,7 +136,7 @@ async function main() {
   lines.push('};');
   lines.push('');
 
-  const outPath = path.join(__dirname, '..', 'src', 'data', 'rosters.ts');
+  const outPath = path.join(__dirname, '..', 'src', 'data', 'rosters.college.ts');
   fs.writeFileSync(outPath, lines.join('\n'), 'utf8');
   console.error(`\nWrote ${outPath}`);
 }

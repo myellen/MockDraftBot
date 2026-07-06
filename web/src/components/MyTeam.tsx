@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { schoolLabel } from '../mode';
 import * as api from '../api';
 import type { DraftState, Team } from '../types';
 import { teamColorToCSS } from '../types';
@@ -160,7 +161,7 @@ export function MyTeam({ roomCode, state, teams, userId }: MyTeamProps) {
                 <th>#</th>
                 <th>Player</th>
                 <th>Pos</th>
-                <th>School</th>
+                <th>{schoolLabel()}</th>
               </tr>
             </thead>
             <tbody>

@@ -4,6 +4,8 @@ import type { TokenPayload } from '../auth';
 import { TEAMS } from '../../data/teams';
 import { ALL_POSITIONS } from '../../data/prospects';
 import { TEAM_DRAFT_INTEL, DRAFT_KNOWLEDGE_BLOCK } from '../../data/boardSystemPrompt';
+import { DRAFT_MODE } from '../../data/draftMode';
+import { isAvailable as isBeastAvailable } from '../../data/beastScouting';
 import { isOllamaConfigured, chatJSONWithHistory } from '../../llm/OllamaService';
 import {
   extractDataNeeds as sharedExtractDataNeeds,
@@ -97,7 +99,10 @@ function buildTradeSystemPrompt(
     ? state.picks.slice(-15).map((p: any) => `  #${p.overall} ${p.team}: ${p.prospectName} (${p.pos})`).join('\n')
     : '  (no picks made yet)';
 
-  return `You are an NFL trade assistant for a mock draft. Your job is to parse a natural-language trade description into structured trade data.
+  const redraftNote = DRAFT_MODE === 'redraft'
+    ? '\n\nMODE: League-wide REDRAFT — every current NFL player is in the draft pool and all rosters start empty. There are NO veteran/player trades in this mode; trades involve picks and future picks ONLY. Leave "offeredPlayers"/"requestedPlayers" empty.'
+    : '';
+  return `You are an NFL trade assistant for a mock draft. Your job is to parse a natural-language trade description into structured trade data.${redraftNote}
 
 You are a stateless agent — all the information you need is in this prompt.
 
@@ -128,7 +133,7 @@ ${otherTeamsContext}
 ${recentPicksStr}
 
 ## Rules
-- This is the **2026 NFL Draft**. The picks listed under "Available Draft Picks (current year)" are 2026 picks.
+- This is the **2026 NFL ${DRAFT_MODE === 'redraft' ? 'Redraft' : 'Draft'}**. The picks listed under "Available Draft Picks (current year)" are 2026 picks.
 - When the user says "first round pick", "2026 first", "my 1st rounder", etc., they mean a CURRENT YEAR pick — find the matching pick by round from the "Available Draft Picks" lists and use its OVERALL number in "offeredPicks" or "requestedPicks".
 - "offeredPicks" and "requestedPicks" use OVERALL pick numbers (not round.pick notation) — these are for current-year (2026) picks ONLY.
 - "offeredFuturePicks" and "requestedFuturePicks" are for picks in FUTURE years (2027, 2028) ONLY — use format like "2027R1", "2028R3". NEVER put 2026 picks here. If a team has multiple picks in the same round, append the original team abbreviation: "2027R5-CAR".
@@ -210,7 +215,7 @@ function buildBoardSystemPrompt(
 
   const defaultBoardSize = Math.max(10, remainingPicks * 2);
 
-  return `You are an NFL draft scout and board assistant for a mock draft. You can answer questions about prospects, team needs, and draft strategy, AND parse board change instructions into structured data.
+  return `You are an NFL ${DRAFT_MODE === 'redraft' ? 'redraft GM assistant for a league-wide redraft of current NFL players — every player is in the pool, all rosters start empty, and pool IDs ARE the consensus value ranking (lower = better)' : 'draft scout and board assistant for a mock draft'}. You can answer questions about ${DRAFT_MODE === 'redraft' ? 'players' : 'prospects'}, team needs, and draft strategy, AND parse board change instructions into structured data.
 
 The user controls the **${teamName} (${teamAbbr})**.
 
@@ -427,12 +432,14 @@ export function aiRoutes(rm: RoomManager): Router {
 
       console.log(`[board-ai-web] User=${user.userId} Team=${userTeam} Input="${message}"`);
 
-      // Phase 1: Extract data needs
-      const needs = await extractDataNeeds(message, key, boardNames);
-      console.log(`[board-ai-web] Extraction: lookups=${needs.lookups.length}, posLists=${needs.posLists.length}, ragQuery=${needs.ragQuery ?? 'none'}`);
-
-      // Phase 2: Fetch scouting data
-      const scoutingData = await fetchScoutingData(needs, boardNames);
+      // Phase 1+2: extract data needs and fetch scouting data — skip both when
+      // no scouting corpus is loaded (e.g. redraft mode) to save the LLM call
+      let scoutingData = '';
+      if (isBeastAvailable()) {
+        const needs = await extractDataNeeds(message, key, boardNames);
+        console.log(`[board-ai-web] Extraction: lookups=${needs.lookups.length}, posLists=${needs.posLists.length}, ragQuery=${needs.ragQuery ?? 'none'}`);
+        scoutingData = await fetchScoutingData(needs, boardNames);
+      }
 
       // Phase 3: Main LLM call
       const systemPrompt = buildBoardSystemPrompt(engine, userTeam, teamName);

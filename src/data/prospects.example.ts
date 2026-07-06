@@ -1,6 +1,7 @@
 import { Prospect } from '../engine/types';
 
-// Replace with your full prospect list sourced from a big board (e.g. DraftTek, PFF, etc.)
+// Copy to prospects.college.ts and replace with your full prospect list
+// sourced from a big board (e.g. DraftTek, PFF, etc.)
 // Positions: QB, RB, WR, TE, OT, OG, C, EDGE, DT, DE, LB, CB, S, K, P
 export const PROSPECTS: Prospect[] = [
   { rank: 1,   name: 'Player One',         pos: 'QB',   school: 'University A' },

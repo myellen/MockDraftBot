@@ -1,3 +1,4 @@
+import { DRAFT_MODE } from '../data/draftMode';
 /**
  * Insider personas and prompt builders — shared by rumor.ts (Discord) and InsiderService.ts (web).
  * GM-emulator edition: enriched with GM-specific knowledge for more realistic insider reporting.
@@ -98,6 +99,87 @@ BEAT: League-wide sentiment. "The league feels..." / "Multiple GMs told me..." �
   },
 ];
 
+// ── GM intelligence blocks (mode-selected) ──────────────────────────────
+// The college block includes 2026 class intel and real draft-capital facts;
+// those are false in a clean-slate redraft, so the redraft variant keeps the
+// GM personalities and drops class/capital specifics.
+
+const GM_INTEL_COLLEGE = `## GM Intelligence \u2014 Use this to generate contextually-accurate nuggets
+
+### Aggressive Traders (most likely to be "working the phones")
+- Howie Roseman (PHI): 49+ draft-day trades in 10 years, traded up 7 times in Round 1. Was "frustrated by repeated attempts to trade up" in 2025. His 2026 priority: (1) trade up, (2) stay put, (3) trade back. "The ultimate opportunist on draft day."
+- Darren Mougey (NYJ): 12 draft-related trades since Jan 2025. Traded Sauce Gardner and Quinnen Williams. "Everything's on the table."
+- Nick Caserio (HOU): 25 draft-day trades since 2021. Most active draft-day trader in the NFL.
+- Brian Gutekunst (GB): 13 draft-day trades (8 trade-ups). No first-round pick this year \u2014 may try to trade back in.
+- Mickey Loomis (NO): Aggressive trade-up tendencies throughout 20+ year tenure.
+- Omar Khan (PIT): "Khan artist" with five top-100 picks \u2014 projected trade-up candidate.
+- Les Snead (LAR): "Polar opposite of conservative." May trade pick 29 for veteran talent.
+- Brad Holmes (DET): Willing to trade up 20 spots or trade down from top 10. Wild card.
+
+### Pick Accumulators (most likely to be "fielding calls" or "open for business")
+- Eric DeCosta (BAL): Analytics-driven trade-back specialist. "More at-bats" philosophy.
+- George Paton (DEN): Multi-step trade-back sequences. Sean Payton wants to trade up (tension).
+- Ryan Poles (CHI): Committed to BPA, tends to trade back.
+- Andrew Berry (CLE): Two first-round picks (6, 24). Openly embraces trade-back flexibility.
+- John Schneider (SEA): 74 trades involving picks over 16 drafts.
+
+### Conservative/Stay-Put (unlikely to generate trade buzz)
+- Duke Tobin (CIN): "Don't typically make major moves during the draft weekend."
+- Chris Ballard (IND): Draft-and-retain, rarely trades.
+- Monti Ossenfort (ARI): Draft-and-develop, less trade activity.
+
+### Key GM Relationships (for nuggets about "teams talking")
+- Beane (BUF) trained Schoen (NYG) and Morgan (CAR) \u2014 they know each other's boards
+- Sullivan (MIA) spent 22 years with Packers alongside Gutekunst (GB), Schneider (SEA), Wolf (NE), Mougey (NYJ)
+- DeCosta (BAL) trained Hortiz (LAC) \u2014 Ravens pipeline
+- Cunningham (ATL) worked in BAL, PHI, CHI \u2014 knows DeCosta, Roseman, Poles
+- Veach (KC) trained Borgonzi (TEN) \u2014 Chiefs pipeline
+
+### 2026 Draft Intel (for grounding nuggets in reality)
+- No. 1: Raiders taking QB Fernando Mendoza (universal consensus)
+- No. 2: Jets split between EDGE David Bailey and LB/EDGE Arvell Reese
+- No. 3: Cardinals likely RT or Ohio State LB, not QB
+- No. 10: LSU CB Mansoor Delane "most certain" non-No. 1 pick \u2014 to Cincinnati
+- Steelers: Five top-100 picks, aggressive trade-up candidate for WR
+- Commanders: Only 3 picks in top 150 \u2014 may trade down from No. 7
+- Eagles: Roseman's top priority is trading up
+- Rams: May trade pick 29 for veteran talent like Chiefs CB Trent McDuffie`;
+
+const GM_INTEL_REDRAFT = `## GM Intelligence \u2014 Use this to generate contextually-accurate nuggets
+
+NOTE: This is a league-wide REDRAFT \u2014 every current NFL player is in the pool, all rosters start empty, and every team holds its own picks in all 7 rounds. Do NOT reference college prospects, this year's real draft order, or real-life pick trades. Nuggets should be about redraft strategy: which positions teams are hunting, who's working the phones, players falling further than expected.
+
+### Aggressive Traders (most likely to be "working the phones")
+- Howie Roseman (PHI): 49+ draft-day trades in 10 years, traded up 7 times in Round 1. "The ultimate opportunist on draft day."
+- Darren Mougey (NYJ): 12 draft-related trades since Jan 2025. "Everything's on the table."
+- Nick Caserio (HOU): 25 draft-day trades since 2021. Most active draft-day trader in the NFL.
+- Brian Gutekunst (GB): 13 draft-day trades (8 trade-ups).
+- Mickey Loomis (NO): Aggressive trade-up tendencies throughout 20+ year tenure.
+- Omar Khan (PIT): "Khan artist" \u2014 known trade-up candidate.
+- Les Snead (LAR): "Polar opposite of conservative."
+- Brad Holmes (DET): Willing to trade up 20 spots or trade down from top 10. Wild card.
+
+### Pick Accumulators (most likely to be "fielding calls" or "open for business")
+- Eric DeCosta (BAL): Analytics-driven trade-back specialist. "More at-bats" philosophy.
+- George Paton (DEN): Multi-step trade-back sequences. Sean Payton wants to trade up (tension).
+- Ryan Poles (CHI): Committed to BPA, tends to trade back.
+- Andrew Berry (CLE): Openly embraces trade-back flexibility.
+- John Schneider (SEA): 74 trades involving picks over 16 drafts.
+
+### Conservative/Stay-Put (unlikely to generate trade buzz)
+- Duke Tobin (CIN): "Don't typically make major moves during the draft weekend."
+- Chris Ballard (IND): Draft-and-retain, rarely trades.
+- Monti Ossenfort (ARI): Draft-and-develop, less trade activity.
+
+### Key GM Relationships (for nuggets about "teams talking")
+- Beane (BUF) trained Schoen (NYG) and Morgan (CAR) \u2014 they know each other's boards
+- Sullivan (MIA) spent 22 years with Packers alongside Gutekunst (GB), Schneider (SEA), Wolf (NE), Mougey (NYJ)
+- DeCosta (BAL) trained Hortiz (LAC) \u2014 Ravens pipeline
+- Cunningham (ATL) worked in BAL, PHI, CHI \u2014 knows DeCosta, Roseman, Poles
+- Veach (KC) trained Borgonzi (TEN) \u2014 Chiefs pipeline`;
+
+const GM_INTEL_BLOCK = DRAFT_MODE === 'redraft' ? GM_INTEL_REDRAFT : GM_INTEL_COLLEGE;
+
 // ── Leaker prompt builder ──────────────────────────────────────────────────
 
 export function buildLeakerPrompt(
@@ -161,46 +243,7 @@ ${pendingStr}
 ## GM Strategy Notes (from board-ai conversations)
 ${notesStr}
 
-## GM Intelligence \u2014 Use this to generate contextually-accurate nuggets
-
-### Aggressive Traders (most likely to be "working the phones")
-- Howie Roseman (PHI): 49+ draft-day trades in 10 years, traded up 7 times in Round 1. Was "frustrated by repeated attempts to trade up" in 2025. His 2026 priority: (1) trade up, (2) stay put, (3) trade back. "The ultimate opportunist on draft day."
-- Darren Mougey (NYJ): 12 draft-related trades since Jan 2025. Traded Sauce Gardner and Quinnen Williams. "Everything's on the table."
-- Nick Caserio (HOU): 25 draft-day trades since 2021. Most active draft-day trader in the NFL.
-- Brian Gutekunst (GB): 13 draft-day trades (8 trade-ups). No first-round pick this year \u2014 may try to trade back in.
-- Mickey Loomis (NO): Aggressive trade-up tendencies throughout 20+ year tenure.
-- Omar Khan (PIT): "Khan artist" with five top-100 picks \u2014 projected trade-up candidate.
-- Les Snead (LAR): "Polar opposite of conservative." May trade pick 29 for veteran talent.
-- Brad Holmes (DET): Willing to trade up 20 spots or trade down from top 10. Wild card.
-
-### Pick Accumulators (most likely to be "fielding calls" or "open for business")
-- Eric DeCosta (BAL): Analytics-driven trade-back specialist. "More at-bats" philosophy.
-- George Paton (DEN): Multi-step trade-back sequences. Sean Payton wants to trade up (tension).
-- Ryan Poles (CHI): Committed to BPA, tends to trade back.
-- Andrew Berry (CLE): Two first-round picks (6, 24). Openly embraces trade-back flexibility.
-- John Schneider (SEA): 74 trades involving picks over 16 drafts.
-
-### Conservative/Stay-Put (unlikely to generate trade buzz)
-- Duke Tobin (CIN): "Don't typically make major moves during the draft weekend."
-- Chris Ballard (IND): Draft-and-retain, rarely trades.
-- Monti Ossenfort (ARI): Draft-and-develop, less trade activity.
-
-### Key GM Relationships (for nuggets about "teams talking")
-- Beane (BUF) trained Schoen (NYG) and Morgan (CAR) \u2014 they know each other's boards
-- Sullivan (MIA) spent 22 years with Packers alongside Gutekunst (GB), Schneider (SEA), Wolf (NE), Mougey (NYJ)
-- DeCosta (BAL) trained Hortiz (LAC) \u2014 Ravens pipeline
-- Cunningham (ATL) worked in BAL, PHI, CHI \u2014 knows DeCosta, Roseman, Poles
-- Veach (KC) trained Borgonzi (TEN) \u2014 Chiefs pipeline
-
-### 2026 Draft Intel (for grounding nuggets in reality)
-- No. 1: Raiders taking QB Fernando Mendoza (universal consensus)
-- No. 2: Jets split between EDGE David Bailey and LB/EDGE Arvell Reese
-- No. 3: Cardinals likely RT or Ohio State LB, not QB
-- No. 10: LSU CB Mansoor Delane "most certain" non-No. 1 pick \u2014 to Cincinnati
-- Steelers: Five top-100 picks, aggressive trade-up candidate for WR
-- Commanders: Only 3 picks in top 150 \u2014 may trade down from No. 7
-- Eagles: Roseman's top priority is trading up
-- Rams: May trade pick 29 for veteran talent like Chiefs CB Trent McDuffie
+${GM_INTEL_BLOCK}
 
 ## Task
 
